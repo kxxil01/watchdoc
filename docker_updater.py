@@ -110,6 +110,26 @@ class DockerUpdater:
             self.logger.error(f"Failed to initialize Docker client: {e}")
             sys.exit(1)
     
+    def resolve_env_vars(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Recursively resolve environment variables in configuration values."""
+        resolved = {}
+        for key, value in config_dict.items():
+            if isinstance(value, str):
+                # Replace ${VAR_NAME} with environment variable value
+                import re
+                def replace_env_var(match):
+                    var_name = match.group(1)
+                    return os.getenv(var_name, match.group(0))  # Return original if not found
+                
+                resolved[key] = re.sub(r'\$\{([^}]+)\}', replace_env_var, value)
+            elif isinstance(value, dict):
+                resolved[key] = self.resolve_env_vars(value)
+            elif isinstance(value, list):
+                resolved[key] = [self.resolve_env_vars(item) if isinstance(item, dict) else item for item in value]
+            else:
+                resolved[key] = value
+        return resolved
+
     def load_config(self):
         """Load configuration from JSON file."""
         if not os.path.exists(self.config_file):
@@ -122,13 +142,17 @@ class DockerUpdater:
             self.check_interval = config.get('check_interval', 30)
             
             for service_config in config.get('services', []):
+                # Resolve environment variables in registry_config
+                registry_config = service_config.get('registry_config', {})
+                resolved_registry_config = self.resolve_env_vars(registry_config)
+                
                 service = ServiceConfig(
                     name=service_config['name'],
                     image=service_config['image'],
                     compose_file=service_config['compose_file'],
                     compose_service=service_config['compose_service'],
                     registry_type=service_config.get('registry_type', 'docker_hub'),
-                    registry_config=service_config.get('registry_config', {}),
+                    registry_config=resolved_registry_config,
                     tag_pattern=service_config.get('tag_pattern'),
                     semver_pattern=service_config.get('semver_pattern')
                 )
