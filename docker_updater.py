@@ -7,25 +7,39 @@ when new images with the same tag are available.
 
 import os
 import sys
-import time
 import json
+import time
 import logging
-import hashlib
 import subprocess
+import tempfile
 import base64
-import boto3
+import hashlib
 import re
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
-from pathlib import Path
-
+from dataclasses import dataclass, field
+from typing import List, Optional, Dict, Any
 import docker
+from docker.errors import DockerException
 import requests
-from docker.errors import DockerException, APIError
-from google.cloud import storage
+import boto3
+from botocore.exceptions import ClientError, NoCredentialsError
+from google.cloud import storage as gcs
+from google.auth.exceptions import DefaultCredentialsError
 from google.auth import default
 from google.auth.transport.requests import Request
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    # Load from the config directory
+    env_file = '/etc/docker-auto-updater/.env'
+    if os.path.exists(env_file):
+        load_dotenv(env_file)
+        print(f"Loaded environment variables from {env_file}")
+    else:
+        print(f"Warning: {env_file} not found, using system environment variables")
+except ImportError:
+    print("python-dotenv not installed, using system environment variables only")
 
 
 @dataclass
