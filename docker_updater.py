@@ -17,7 +17,7 @@ import hashlib
 import re
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 import docker
 from docker.errors import DockerException
 import requests
