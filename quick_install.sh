@@ -139,11 +139,22 @@ chmod 755 "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR"
 
 # Install Python dependencies
 echo -e "${YELLOW}Installing Python dependencies...${NC}"
-if command -v pip3 >/dev/null 2>&1; then
-    pip3 install -r "$INSTALL_DIR/requirements.txt"
-    echo "✅ Python dependencies installed"
+
+# Create virtual environment for the service
+VENV_DIR="$INSTALL_DIR/venv"
+if command -v python3 >/dev/null 2>&1; then
+    # Create virtual environment
+    python3 -m venv "$VENV_DIR"
+    
+    # Install dependencies in virtual environment
+    "$VENV_DIR/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
+    
+    # Update systemd service to use virtual environment
+    sed -i "s|ExecStart=.*|ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/docker_updater.py|" /etc/systemd/system/docker-updater.service
+    
+    echo "✅ Python dependencies installed in virtual environment"
 else
-    echo -e "${YELLOW}Warning: pip3 not found, please install Python dependencies manually${NC}"
+    echo -e "${YELLOW}Warning: python3 not found, please install Python dependencies manually${NC}"
 fi
 
 # Install and start systemd service
