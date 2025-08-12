@@ -238,6 +238,9 @@ EOF
 set_permissions() {
     echo -e "${YELLOW}Setting file permissions...${NC}"
     
+    # Create .docker directory for Docker credentials
+    mkdir -p "$INSTALL_DIR/.docker"
+    
     # Set ownership
     chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
     chown -R "$SERVICE_USER:docker" "$CONFIG_DIR"
@@ -250,6 +253,7 @@ set_permissions() {
         chmod 644 "$CONFIG_DIR/updater_config.json"
     fi
     chmod 755 "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR"
+    chmod 755 "$INSTALL_DIR/.docker"
     
     echo -e "${GREEN}✅ Permissions set${NC}"
 }
