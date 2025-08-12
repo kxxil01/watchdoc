@@ -223,26 +223,25 @@ fi
 
 echo -e "${YELLOW}Copying configuration files...${NC}"
 
-# Debug information
-echo "Current directory: $(pwd)"
-echo "Files in directory:"
-ls -la
+# Store the original directory where script was run
+SCRIPT_SOURCE_DIR="$(pwd)"
+echo "Script source directory: $SCRIPT_SOURCE_DIR"
 
-# Check for required configuration file
-if [ ! -f "updater_config.json" ]; then
-    echo -e "${RED}Error: updater_config.json not found in current directory${NC}"
+# Check for required configuration file in source directory
+if [ ! -f "$SCRIPT_SOURCE_DIR/updater_config.json" ]; then
+    echo -e "${RED}Error: updater_config.json not found in source directory${NC}"
+    echo "Source directory: $SCRIPT_SOURCE_DIR"
+    echo "Files in source directory:"
+    ls -la "$SCRIPT_SOURCE_DIR"
     echo "Please ensure you're running the installer from the docker-auto-updater directory"
-    echo -e "${YELLOW}Debug: Checking file with different methods...${NC}"
-    echo "ls result: $(ls updater_config.json 2>/dev/null || echo 'not found')"
-    echo "test -e result: $(test -e updater_config.json && echo 'exists' || echo 'not found')"
-    echo "test -f result: $(test -f updater_config.json && echo 'is file' || echo 'not file')"
-    echo "test -r result: $(test -r updater_config.json && echo 'readable' || echo 'not readable')"
     exit 1
 fi
 
+echo "✅ Found configuration files in source directory"
+
 # Copy main configuration
 if [ ! -f "$CONFIG_DIR/updater_config.json" ]; then
-    cp updater_config.json "$CONFIG_DIR/"
+    cp "$SCRIPT_SOURCE_DIR/updater_config.json" "$CONFIG_DIR/"
     echo "Copied default configuration"
 else
     echo "Configuration file already exists, skipping..."
@@ -250,8 +249,8 @@ fi
 
 # Handle environment file (create if missing)
 if [ ! -f "$CONFIG_DIR/.env" ]; then
-    if [ -f ".env.example" ]; then
-        cp .env.example "$CONFIG_DIR/.env"
+    if [ -f "$SCRIPT_SOURCE_DIR/.env.example" ]; then
+        cp "$SCRIPT_SOURCE_DIR/.env.example" "$CONFIG_DIR/.env"
         echo "Copied environment template"
     else
         echo -e "${YELLOW}Warning: .env.example not found, creating default environment file...${NC}"
@@ -280,6 +279,14 @@ else
     echo "Environment file already exists, skipping..."
 fi
 
+echo -e "${YELLOW}Copying application files...${NC}"
+
+# Copy main script
+cp "$SCRIPT_SOURCE_DIR/docker_updater.py" "$INSTALL_DIR/"
+
+# Copy requirements file
+cp "$SCRIPT_SOURCE_DIR/requirements.txt" "$INSTALL_DIR/"
+
 echo -e "${YELLOW}Setting permissions...${NC}"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 chown -R "$SERVICE_USER:docker" "$CONFIG_DIR"
@@ -293,26 +300,26 @@ chmod 755 "$CONFIG_DIR"
 chmod 755 "$STATE_DIR"
 
 echo -e "${YELLOW}Installing systemd service...${NC}"
-if [ ! -f "docker-updater.service" ]; then
-    echo -e "${RED}Error: docker-updater.service not found in current directory${NC}"
+if [ ! -f "$SCRIPT_SOURCE_DIR/docker-updater.service" ]; then
+    echo -e "${RED}Error: docker-updater.service not found in source directory${NC}"
     exit 1
 fi
 
 # Check if systemd is available
 if ! command -v systemctl >/dev/null 2>&1; then
     echo -e "${YELLOW}Warning: systemd not available. Service file copied but not enabled.${NC}"
-    cp docker-updater.service /etc/init.d/ 2>/dev/null || echo "Could not copy service file"
+    cp "$SCRIPT_SOURCE_DIR/docker-updater.service" /etc/init.d/ 2>/dev/null || echo "Could not copy service file"
 else
-    cp docker-updater.service /etc/systemd/system/
+    cp "$SCRIPT_SOURCE_DIR/docker-updater.service" /etc/systemd/system/
     systemctl daemon-reload
     echo "Systemd service installed"
 fi
 
 echo -e "${YELLOW}Configuring sudo permissions for docker-compose operations...${NC}"
-if [ -f "docker-updater-sudoers" ]; then
+if [ -f "$SCRIPT_SOURCE_DIR/docker-updater-sudoers" ]; then
     # Validate sudoers file syntax
-    if visudo -c -f docker-updater-sudoers >/dev/null 2>&1; then
-        cp docker-updater-sudoers /etc/sudoers.d/docker-updater
+    if visudo -c -f "$SCRIPT_SOURCE_DIR/docker-updater-sudoers" >/dev/null 2>&1; then
+        cp "$SCRIPT_SOURCE_DIR/docker-updater-sudoers" /etc/sudoers.d/docker-updater
         chmod 440 /etc/sudoers.d/docker-updater
         echo "Sudoers configuration installed"
     else
