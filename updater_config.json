@@ -2,18 +2,10 @@
   "check_interval": 30,
   "services": [
     {
-      "name": "nginx-web-server",
-      "image": "nginx:latest",
-      "compose_file": "/compose/web-app/docker-compose.yml",
-      "compose_service": "web",
-      "registry_type": "docker_hub",
-      "enabled": true
-    },
-    {
-      "name": "aws-ecr-staging-app",
-      "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/accounting:staging-f930fb4",
-      "compose_file": "/compose/ecr-app/docker-compose.yml",
-      "compose_service": "app",
+      "name": "social-media-aggregator",
+      "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/social-media-aggregator",
+      "compose_file": "/app/social-media-aggregator/docker-compose-prod.yml",
+      "compose_service": "social-media-aggregator",
       "registry_type": "ecr",
       "tag_pattern": "staging-*",
       "enabled": true,
@@ -24,13 +16,13 @@
       }
     },
     {
-      "name": "aws-ecr-prod-app",
-      "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/accounting:prod-f930fb4",
-      "compose_file": "/compose/ecr-app/docker-compose.yml",
-      "compose_service": "app-prod",
+      "name": "becreatives-proxy-server",
+      "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/becreatives-proxy-server",
+      "compose_file": "/app/backend-core/proxy-server/docker-compose-prod.yml",
+      "compose_service": "becreatives-proxy-server",
       "registry_type": "ecr",
-      "tag_pattern": "prod-*",
-      "enabled": false,
+      "tag_pattern": "staging-*",
+      "enabled": true,
       "registry_config": {
         "region": "us-east-2",
         "aws_access_key_id": "${AWS_ACCESS_KEY_ID}",
@@ -38,51 +30,17 @@
       }
     },
     {
-      "name": "gcr-microservice",
-      "image": "gcr.io/my-project/microservice:latest",
-      "compose_file": "/compose/gcr-service/docker-compose.yml",
-      "compose_service": "microservice",
-      "registry_type": "gcr",
-      "enabled": true,
-      "registry_config": {
-        "project_id": "my-project",
-        "service_account_path": "/path/to/service-account.json"
-      }
-    },
-    {
-      "name": "private-docker-hub",
-      "image": "mycompany/private-app:latest",
-      "compose_file": "/compose/private-app/docker-compose.yml",
-      "compose_service": "app",
-      "registry_type": "docker_hub",
-      "enabled": true,
-      "registry_config": {
-        "username": "${DOCKER_HUB_USERNAME}",
-        "password": "${DOCKER_HUB_PASSWORD}"
-      }
-    },
-    {
-      "name": "semver-release-app",
-      "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/webapp:v1.2.3",
-      "compose_file": "/compose/webapp/docker-compose.yml",
-      "compose_service": "webapp",
+      "name": "accounting",
+      "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/accounting",
+      "compose_file": "/app/accounting/docker-compose-prod.yml",
+      "compose_service": "accounting",
       "registry_type": "ecr",
-      "semver_pattern": "v*",
+      "tag_pattern": "staging-*",
       "enabled": true,
       "registry_config": {
-        "region": "us-east-2"
-      }
-    },
-    {
-      "name": "release-tagged-service",
-      "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/service:release-2.1.0",
-      "compose_file": "/compose/service/docker-compose.yml",
-      "compose_service": "service",
-      "registry_type": "ecr",
-      "semver_pattern": "release-*",
-      "enabled": true,
-      "registry_config": {
-        "region": "us-east-2"
+        "region": "us-east-2",
+        "aws_access_key_id": "${AWS_ACCESS_KEY_ID}",
+        "aws_secret_access_key": "${AWS_SECRET_ACCESS_KEY}"
       }
     }
   ]
