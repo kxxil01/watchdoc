@@ -12,14 +12,15 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration
+# Configuration - matches install.sh structure
 SERVICE_NAME="docker-updater"
 SERVICE_USER="docker-updater"
-SERVICE_GROUP="docker-updater"
+SERVICE_GROUP="docker"
 INSTALL_DIR="/opt/docker-auto-updater"
 CONFIG_DIR="/etc/docker-auto-updater"
+STATE_DIR="/var/lib/docker-auto-updater"
 LOG_DIR="/var/log/docker-auto-updater"
-STATE_FILE="/var/lib/docker-auto-updater/updater_state.json"
+VENV_DIR="$INSTALL_DIR/venv"
 
 echo -e "${BLUE}Docker Auto-Updater Uninstall Script${NC}"
 echo -e "${BLUE}====================================${NC}"
@@ -102,9 +103,12 @@ else
     echo "Service group not found"
 fi
 
-# Remove installation directory
+# Remove installation directory (includes virtual environment)
 echo -e "${YELLOW}Removing installation directory...${NC}"
 if [ -d "$INSTALL_DIR" ]; then
+    if [ -d "$VENV_DIR" ]; then
+        echo "Removing Python virtual environment: $VENV_DIR"
+    fi
     rm -rf "$INSTALL_DIR"
     echo "Installation directory removed: $INSTALL_DIR"
 else
@@ -143,20 +147,20 @@ else
     echo "Log directory not found: $LOG_DIR"
 fi
 
-# Remove state file
-echo -e "${YELLOW}Removing state file...${NC}"
-if [ -f "$STATE_FILE" ]; then
-    rm -f "$STATE_FILE"
-    echo "State file removed: $STATE_FILE"
-    
-    # Remove parent directory if empty
-    STATE_DIR=$(dirname "$STATE_FILE")
-    if [ -d "$STATE_DIR" ] && [ -z "$(ls -A "$STATE_DIR")" ]; then
-        rmdir "$STATE_DIR"
-        echo "Empty state directory removed: $STATE_DIR"
+# Remove state directory
+echo -e "${YELLOW}Removing state directory...${NC}"
+if [ -d "$STATE_DIR" ]; then
+    echo -e "${YELLOW}State directory contains application state data.${NC}"
+    read -p "Remove state directory $STATE_DIR? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        rm -rf "$STATE_DIR"
+        echo "State directory removed: $STATE_DIR"
+    else
+        echo "State directory preserved: $STATE_DIR"
     fi
 else
-    echo "State file not found: $STATE_FILE"
+    echo "State directory not found: $STATE_DIR"
 fi
 
 # Clean up temporary files
@@ -236,9 +240,11 @@ echo -e "${BLUE}=================${NC}"
 echo "• Systemd service: Stopped and removed"
 echo "• Service user/group: Removed"
 echo "• Sudoers configuration: Removed"
-echo "• Installation directory: Removed"
+echo "• Installation directory: Removed (includes Python venv)"
+echo "• State directory: User choice"
+echo "• Configuration directory: User choice"
+echo "• Log directory: User choice"
 echo "• Temporary files: Cleaned up"
-echo "• Configuration/logs: User choice"
 echo
 echo -e "${BLUE}Thank you for using Docker Auto-Updater!${NC}"
 
