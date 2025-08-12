@@ -187,7 +187,7 @@ sudo -u docker-updater python3 /opt/docker-updater/docker_updater.py --test
 pip install -r requirements.txt
 
 # Run directly
-python docker_updater.py
+python3 docker_updater.py
 ```
 
 ## Security Considerations
@@ -200,6 +200,7 @@ python docker_updater.py
 ## Monitoring and Logging
 
 ### Log Files
+
 - `docker_updater.log`: Application logs
 - `updater_state.json`: Persistent state (image digests, last update times)
 
@@ -281,7 +282,7 @@ Intelligently update to the latest semantic version:
 Built-in monitoring:
 
 - Docker daemon connectivity
-- Registry accessibility  
+- Registry accessibility
 - Compose file validation
 - Service status verification
 
@@ -303,12 +304,15 @@ Built-in monitoring:
    ```
 
 3. **Image Digest Not Found**
+
    - Ensure the image exists in the registry
    - Check network connectivity to the registry
    - Verify image tag is correct
 
 ### Debug Mode
+
 Enable debug logging by modifying the logging level in `docker_updater.py`:
+
 ```python
 logging.basicConfig(level=logging.DEBUG, ...)
 ```

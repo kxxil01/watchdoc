@@ -5,6 +5,7 @@ The Docker Auto-Updater now supports dynamic tag patterns for ECR repositories, 
 ## How It Works
 
 ### Tag Pattern Detection
+
 - Uses AWS ECR API to list all tags in a repository
 - Filters tags matching your specified pattern (e.g., `staging-*`)
 - Sorts by push date to find the newest image
@@ -29,16 +30,19 @@ The Docker Auto-Updater now supports dynamic tag patterns for ECR repositories, 
 ## Key Features
 
 ### Automatic Tag Discovery
+
 - Scans ECR repository for tags matching pattern
 - Identifies newest image by push timestamp
 - Handles multiple environments (staging, prod, dev)
 
 ### Smart Updates
+
 - Only updates when a newer tag is found
 - Updates docker-compose.yml automatically
 - Restarts services with zero-downtime rolling updates
 
 ### State Tracking
+
 - Remembers current tag to avoid unnecessary updates
 - Persists state across restarts
 - Logs all tag changes for audit trail
@@ -46,20 +50,23 @@ The Docker Auto-Updater now supports dynamic tag patterns for ECR repositories, 
 ## Supported Tag Patterns
 
 ### Environment-Based Tags
-```
+
+```text
 staging-*     → staging-f930fb4, staging-a1b2c3d
 prod-*        → prod-f930fb4, prod-a1b2c3d
 dev-*         → dev-f930fb4, dev-a1b2c3d
 ```
 
 ### Version-Based Tags
-```
+
+```text
 v1.*          → v1.0.1, v1.0.2, v1.1.0
 release-*     → release-2024.1, release-2024.2
 ```
 
 ### Custom Patterns
-```
+
+```text
 feature-*     → feature-auth, feature-payments
 hotfix-*      → hotfix-security, hotfix-bug123
 ```
@@ -67,7 +74,7 @@ hotfix-*      → hotfix-security, hotfix-bug123
 ## Example Workflow
 
 1. **CI/CD Pipeline** pushes new image:
-   ```
+   ```text
    285065797661.dkr.ecr.us-east-2.amazonaws.com/accounting:staging-a1b2c3d
    ```
 

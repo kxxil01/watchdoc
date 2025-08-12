@@ -5,11 +5,13 @@ This guide explains how to configure the Docker Auto-Updater with AWS ECR, Googl
 ## AWS ECR Setup
 
 ### 1. Create ECR Repository
+
 ```bash
 aws ecr create-repository --repository-name my-app --region us-east-1
 ```
 
 ### 2. Configure IAM Permissions
+
 Create an IAM user with the following policy:
 ```json
 {
@@ -48,6 +50,7 @@ Create an IAM user with the following policy:
 ```
 
 ### 4. Environment Variables
+
 ```bash
 export AWS_ACCESS_KEY_ID=your_access_key
 export AWS_SECRET_ACCESS_KEY=your_secret_key
