@@ -13,7 +13,7 @@ docker-updater ALL=(root) NOPASSWD: /bin/cp /tmp/docker-compose-*.yml /home/*/do
 docker-updater ALL=(root) NOPASSWD: /bin/cp /tmp/docker-compose-*.yml /var/*/docker-compose.yml
 
 # Allow docker-updater to change ownership of temporary files
-docker-updater ALL=(root) NOPASSWD: /bin/chown docker-updater:docker /tmp/docker-compose-*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/chown docker-updater\:docker /tmp/docker-compose-*.yml
 
 # Allow docker-updater to read docker-compose files
 docker-updater ALL=(root) NOPASSWD: /bin/cat /opt/*/docker-compose.yml
