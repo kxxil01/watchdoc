@@ -18,11 +18,11 @@ RestartSec=30
 StandardOutput=journal
 StandardError=journal
 
-# Security settings
-NoNewPrivileges=true
+# Security settings - relaxed to allow sudo execution
+NoNewPrivileges=false
 PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
+ProtectSystem=false
+ProtectHome=false
 ReadWritePaths=/var/lib/docker-auto-updater /var/log/docker-auto-updater /var/run/docker.sock /opt/docker-updater /app
 
 [Install]
