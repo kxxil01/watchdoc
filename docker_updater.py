@@ -34,8 +34,19 @@ try:
     # Load from the config directory
     env_file = '/etc/docker-auto-updater/.env'
     if os.path.exists(env_file):
-        load_dotenv(env_file)
-        print(f"Loaded environment variables from {env_file}")
+        # Check if we can read the file
+        try:
+            with open(env_file, 'r') as f:
+                content = f.read()
+            load_dotenv(env_file)
+            print(f"Loaded environment variables from {env_file}")
+            # Debug: Show what AWS credentials we loaded
+            aws_key = os.getenv('AWS_ACCESS_KEY_ID', 'NOT_SET')
+            print(f"AWS_ACCESS_KEY_ID: {aws_key[:10]}..." if aws_key != 'NOT_SET' else "AWS_ACCESS_KEY_ID: NOT_SET")
+        except PermissionError:
+            print(f"Permission denied reading {env_file}")
+        except Exception as e:
+            print(f"Error loading {env_file}: {e}")
     else:
         print(f"Warning: {env_file} not found, using system environment variables")
 except ImportError:
