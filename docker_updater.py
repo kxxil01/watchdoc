@@ -696,9 +696,9 @@ class DockerUpdater:
             base_image = new_image.split(':')[0] if ':' in new_image else new_image
             new_tag = new_image.split(':')[1] if ':' in new_image else 'latest'
             
-            # Use sed to replace the image tag in-place
-            # Pattern: find lines with the base image and replace the tag
-            sed_pattern = f's|{re.escape(base_image)}:[^"]*|{re.escape(new_image)}|g'
+            # Use a simpler sed pattern that's more reliable
+            # Pattern: find the base image and replace everything after the colon
+            sed_pattern = f's|{base_image}:[^[:space:]]*|{new_image}|g'
             
             # Try direct sed first
             try:

@@ -18,4 +18,8 @@ docker-updater ALL=(root) NOPASSWD: /bin/chown docker-updater:docker /tmp/docker
 # Allow docker-updater to read docker-compose files
 docker-updater ALL=(root) NOPASSWD: /bin/cat /opt/*/docker-compose.yml
 docker-updater ALL=(root) NOPASSWD: /bin/cat /home/*/docker-compose.yml
+
+# Allow docker-updater to use sed for in-place editing of compose files
+docker-updater ALL=(root) NOPASSWD: /bin/sed -i * /app/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /usr/bin/sed -i * /app/*/docker-compose*.yml
 docker-updater ALL=(root) NOPASSWD: /bin/cat /var/*/docker-compose.yml
