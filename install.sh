@@ -223,10 +223,20 @@ fi
 
 echo -e "${YELLOW}Copying configuration files...${NC}"
 
+# Debug information
+echo "Current directory: $(pwd)"
+echo "Files in directory:"
+ls -la
+
 # Check for required configuration file
 if [ ! -f "updater_config.json" ]; then
     echo -e "${RED}Error: updater_config.json not found in current directory${NC}"
     echo "Please ensure you're running the installer from the docker-auto-updater directory"
+    echo -e "${YELLOW}Debug: Checking file with different methods...${NC}"
+    echo "ls result: $(ls updater_config.json 2>/dev/null || echo 'not found')"
+    echo "test -e result: $(test -e updater_config.json && echo 'exists' || echo 'not found')"
+    echo "test -f result: $(test -f updater_config.json && echo 'is file' || echo 'not file')"
+    echo "test -r result: $(test -r updater_config.json && echo 'readable' || echo 'not readable')"
     exit 1
 fi
 
