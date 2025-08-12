@@ -1,0 +1,31 @@
+[Unit]
+Description=Docker Auto-Updater Service
+After=docker.service network.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=docker-updater
+Group=docker
+WorkingDirectory=/opt/docker-updater
+Environment=PYTHONPATH=/opt/docker-updater
+Environment=CONFIG_FILE=/etc/docker-updater/updater_config.json
+Environment=STATE_FILE=/var/lib/docker-updater/updater_state.json
+EnvironmentFile=-/etc/docker-updater/.env
+ExecStartPre=/bin/mkdir -p /var/lib/docker-updater
+ExecStartPre=/bin/chown docker-updater:docker /var/lib/docker-updater
+ExecStart=/opt/docker-updater/docker-updater-env/bin/python /opt/docker-updater/docker_updater.py
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/docker-updater /var/run/docker.sock
+
+[Install]
+WantedBy=multi-user.target
