@@ -48,8 +48,15 @@ class ServiceConfig:
 class DockerUpdater:
     """Main Docker updater class."""
     
-    def __init__(self, config_file: str = "updater_config.json"):
+    def __init__(self, config_file: str = None):
+        # Use environment variable or default to proper config directory
+        if config_file is None:
+            config_file = os.getenv('CONFIG_FILE', '/etc/docker-auto-updater/updater_config.json')
         self.config_file = config_file
+        
+        # Set state file path from environment or default
+        self.state_file = os.getenv('STATE_FILE', '/var/lib/docker-auto-updater/updater_state.json')
+        
         self.docker_client = None
         self.services: List[ServiceConfig] = []
         self.check_interval = 30  # seconds
@@ -704,16 +711,16 @@ class DockerUpdater:
             }
             state['services'].append(service_state)
         
-        with open('updater_state.json', 'w') as f:
+        with open(self.state_file, 'w') as f:
             json.dump(state, f, indent=2)
     
     def load_state(self):
         """Load previous state from file."""
-        if not os.path.exists('updater_state.json'):
+        if not os.path.exists(self.state_file):
             return
         
         try:
-            with open('updater_state.json', 'r') as f:
+            with open(self.state_file, 'r') as f:
                 state = json.load(f)
             
             for service_data in state.get('services', []):
@@ -730,7 +737,7 @@ class DockerUpdater:
         """Clean up old state files and temporary files."""
         try:
             # Remove old state files older than 30 days
-            state_file = 'updater_state.json'
+            state_file = self.state_file
             if os.path.exists(state_file):
                 file_age = time.time() - os.path.getmtime(state_file)
                 if file_age > 30 * 24 * 3600:  # 30 days
