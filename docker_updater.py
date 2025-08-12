@@ -59,11 +59,21 @@ class DockerUpdater:
     
     def setup_logging(self):
         """Configure logging with proper formatting."""
+        # Use environment variable for log level, default to INFO
+        log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
+        
+        # Use proper log directory that's writable
+        log_dir = '/var/log/docker-auto-updater'
+        log_file = os.path.join(log_dir, 'docker_updater.log')
+        
+        # Ensure log directory exists and is writable
+        os.makedirs(log_dir, exist_ok=True)
+        
         logging.basicConfig(
-            level=logging.INFO,
+            level=getattr(logging, log_level, logging.INFO),
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler('docker_updater.log'),
+                logging.FileHandler(log_file),
                 logging.StreamHandler(sys.stdout)
             ]
         )
