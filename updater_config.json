@@ -19,7 +19,7 @@
       "name": "becreatives-proxy-server",
       "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/becreatives-proxy-server",
       "compose_file": "/app/backend-core/proxy-server/docker-compose-prod.yml",
-      "compose_service": "becreatives-proxy-server",
+      "compose_service": "proxy-server",
       "registry_type": "ecr",
       "tag_pattern": "staging-*",
       "enabled": true,
