@@ -68,14 +68,25 @@ install_dependencies() {
     case "$OS" in
         "Ubuntu"*|"Debian"*)
             apt-get update
-            apt-get install -y python3 python3-pip python3-venv docker.io docker-compose-plugin curl sudo
+            apt-get install -y python3 python3-pip python3-venv docker.io curl sudo
+            
+            # Try to install docker-compose-plugin, fallback to manual installation
+            if ! apt-get install -y docker-compose-plugin 2>/dev/null; then
+                echo -e "${YELLOW}docker-compose-plugin not available, installing docker-compose manually...${NC}"
+                curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+                chmod +x /usr/local/bin/docker-compose
+            fi
             ;;
         "CentOS"*|"Red Hat"*|"Rocky"*|"AlmaLinux"*)
             if command -v dnf >/dev/null 2>&1; then
-                dnf install -y python3 python3-pip docker docker-compose curl sudo
+                dnf install -y python3 python3-pip docker curl sudo
             else
-                yum install -y python3 python3-pip docker docker-compose curl sudo
+                yum install -y python3 python3-pip docker curl sudo
             fi
+            
+            # Install docker-compose manually for RHEL-based systems
+            curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            chmod +x /usr/local/bin/docker-compose
             ;;
         "Amazon Linux"*)
             yum update -y
