@@ -222,16 +222,15 @@ else
 fi
 
 echo -e "${YELLOW}Copying configuration files...${NC}"
+
+# Check for required configuration file
 if [ ! -f "updater_config.json" ]; then
     echo -e "${RED}Error: updater_config.json not found in current directory${NC}"
+    echo "Please ensure you're running the installer from the docker-auto-updater directory"
     exit 1
 fi
 
-if [ ! -f ".env.example" ]; then
-    echo -e "${RED}Error: .env.example not found in current directory${NC}"
-    exit 1
-fi
-
+# Copy main configuration
 if [ ! -f "$CONFIG_DIR/updater_config.json" ]; then
     cp updater_config.json "$CONFIG_DIR/"
     echo "Copied default configuration"
@@ -239,9 +238,34 @@ else
     echo "Configuration file already exists, skipping..."
 fi
 
+# Handle environment file (create if missing)
 if [ ! -f "$CONFIG_DIR/.env" ]; then
-    cp .env.example "$CONFIG_DIR/.env"
-    echo "Copied environment template"
+    if [ -f ".env.example" ]; then
+        cp .env.example "$CONFIG_DIR/.env"
+        echo "Copied environment template"
+    else
+        echo -e "${YELLOW}Warning: .env.example not found, creating default environment file...${NC}"
+        cat > "$CONFIG_DIR/.env" << 'EOF'
+# Docker Auto-Updater Environment Configuration
+
+# Logging
+LOG_LEVEL=INFO
+
+# AWS ECR Configuration (if using ECR)
+#AWS_ACCESS_KEY_ID=your_access_key
+#AWS_SECRET_ACCESS_KEY=your_secret_key
+#AWS_DEFAULT_REGION=us-east-1
+
+# Google Cloud Configuration (if using GCR)
+#GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+#GCP_PROJECT_ID=your-project-id
+
+# Docker Hub Configuration (if using private repos)
+#DOCKER_HUB_USERNAME=your_username
+#DOCKER_HUB_PASSWORD=your_password
+EOF
+        echo "Created default environment file"
+    fi
 else
     echo "Environment file already exists, skipping..."
 fi
