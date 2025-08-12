@@ -7,14 +7,12 @@ Requires=docker.service
 Type=simple
 User=docker-updater
 Group=docker
-WorkingDirectory=/opt/docker-updater
-Environment=PYTHONPATH=/opt/docker-updater
-Environment=CONFIG_FILE=/etc/docker-updater/updater_config.json
-Environment=STATE_FILE=/var/lib/docker-updater/updater_state.json
-EnvironmentFile=-/etc/docker-updater/.env
-ExecStartPre=/bin/mkdir -p /var/lib/docker-updater
-ExecStartPre=/bin/chown docker-updater:docker /var/lib/docker-updater
-ExecStart=/opt/docker-updater/docker-updater-env/bin/python /opt/docker-updater/docker_updater.py
+WorkingDirectory=/opt/docker-auto-updater
+Environment=PYTHONPATH=/opt/docker-auto-updater
+Environment=CONFIG_FILE=/etc/docker-auto-updater/updater_config.json
+Environment=STATE_FILE=/var/lib/docker-auto-updater/updater_state.json
+EnvironmentFile=-/etc/docker-auto-updater/.env
+ExecStart=/opt/docker-auto-updater/venv/bin/python /opt/docker-auto-updater/docker_updater.py
 Restart=always
 RestartSec=30
 StandardOutput=journal
@@ -25,7 +23,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/docker-updater /var/run/docker.sock
+ReadWritePaths=/var/lib/docker-auto-updater /var/run/docker.sock
 
 [Install]
 WantedBy=multi-user.target
