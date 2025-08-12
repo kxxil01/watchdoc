@@ -690,59 +690,39 @@ class DockerUpdater:
         return False
     
     def update_compose_file(self, service: ServiceConfig, new_image: str) -> bool:
-        """Update the docker-compose file with new image tag, handling root permission conflicts."""
+        """Update the docker-compose file with new image tag using sed for in-place editing."""
         try:
-            import yaml
-            import tempfile
-            import os
+            # Extract the base image name without tag
+            base_image = new_image.split(':')[0] if ':' in new_image else new_image
+            new_tag = new_image.split(':')[1] if ':' in new_image else 'latest'
             
-            # First, try to read the compose file directly
+            # Use sed to replace the image tag in-place
+            # Pattern: find lines with the base image and replace the tag
+            sed_pattern = f's|{re.escape(base_image)}:[^"]*|{re.escape(new_image)}|g'
+            
+            # Try direct sed first
             try:
-                with open(service.compose_file, 'r') as f:
-                    compose_data = yaml.safe_load(f)
-            except PermissionError:
+                result = subprocess.run([
+                    'sed', '-i', sed_pattern, service.compose_file
+                ], check=True, capture_output=True, text=True)
+                
+                self.logger.info(f"Updated {service.compose_file} with new image: {new_image}")
+                return True
+                
+            except subprocess.CalledProcessError:
                 # If permission denied, try with sudo
-                self.logger.info(f"Permission denied reading {service.compose_file}, trying with sudo")
-                result = subprocess.run(['sudo', 'cat', service.compose_file], 
-                                      capture_output=True, text=True, check=True)
-                compose_data = yaml.safe_load(result.stdout)
-            
-            # Find and update the service
-            if 'services' in compose_data and service.compose_service in compose_data['services']:
-                old_image = compose_data['services'][service.compose_service].get('image', '')
-                compose_data['services'][service.compose_service]['image'] = new_image
+                self.logger.info(f"Permission denied, trying with sudo for {service.compose_file}")
                 
-                # Try to write directly first
-                try:
-                    with open(service.compose_file, 'w') as f:
-                        yaml.dump(compose_data, f, default_flow_style=False, sort_keys=False)
-                    self.logger.info(f"Updated {service.compose_file}: {old_image} -> {new_image}")
-                    return True
-                except PermissionError:
-                    # If permission denied, use sudo with temporary file
-                    self.logger.info(f"Permission denied writing {service.compose_file}, using sudo")
-                    
-                    # Create temporary file
-                    temp_fd, temp_path = tempfile.mkstemp(suffix='.yml', prefix='docker-compose-')
-                    try:
-                        with os.fdopen(temp_fd, 'w') as temp_file:
-                            yaml.dump(compose_data, temp_file, default_flow_style=False, sort_keys=False)
-                        
-                        # Use sudo to copy temp file to target location
-                        subprocess.run(['sudo', 'cp', temp_path, service.compose_file], check=True)
-                        self.logger.info(f"Updated {service.compose_file} via sudo: {old_image} -> {new_image}")
-                        return True
-                        
-                    finally:
-                        # Clean up temp file
-                        try:
-                            os.unlink(temp_path)
-                        except:
-                            pass
-            else:
-                self.logger.error(f"Service {service.compose_service} not found in {service.compose_file}")
-                return False
+                result = subprocess.run([
+                    'sudo', 'sed', '-i', sed_pattern, service.compose_file
+                ], check=True, capture_output=True, text=True)
                 
+                self.logger.info(f"Updated {service.compose_file} via sudo with new image: {new_image}")
+                return True
+                
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Failed to update compose file {service.compose_file} with sed: {e}")
+            return False
         except Exception as e:
             self.logger.error(f"Failed to update compose file {service.compose_file}: {e}")
             return False
