@@ -1,8 +1,7 @@
 #!/bin/bash
 
 # Docker Auto-Updater Installation Script
-# Compatible with Ubuntu, Debian, Alpine, CentOS, RHEL, and other Linux distributions
-# This script sets up the Docker Auto-Updater for host-based deployment
+# This script installs the Docker Auto-Updater service on a Linux system
 
 set -e
 
@@ -14,113 +13,104 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-INSTALL_DIR="/opt/docker-updater"
-CONFIG_DIR="/etc/docker-updater"
-STATE_DIR="/var/lib/docker-updater"
 SERVICE_USER="docker-updater"
+SERVICE_GROUP="docker"
+INSTALL_DIR="/opt/docker-auto-updater"
+CONFIG_DIR="/etc/docker-auto-updater"
+STATE_DIR="/var/lib/docker-auto-updater"
+LOG_DIR="/var/log/docker-auto-updater"
 
-# Detect OS and distribution
+echo -e "${GREEN}Docker Auto-Updater Installation Script${NC}"
+echo "========================================"
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${RED}Error: This script must be run as root${NC}"
+    echo "Please run: sudo ./install.sh"
+    exit 1
+fi
+
+# Get current directory (where script is run from) - more reliable approach
+CURRENT_DIR="$(pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Use current directory if script directory detection fails
+if [ ! -f "$SCRIPT_DIR/docker_updater.py" ] && [ -f "$CURRENT_DIR/docker_updater.py" ]; then
+    SCRIPT_DIR="$CURRENT_DIR"
+fi
+
+echo "Installing from: $SCRIPT_DIR"
+
+# Detect OS
 detect_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         OS=$NAME
-        DISTRO=$ID
         VERSION=$VERSION_ID
     elif type lsb_release >/dev/null 2>&1; then
         OS=$(lsb_release -si)
-        DISTRO=$(echo "$OS" | tr '[:upper:]' '[:lower:]')
         VERSION=$(lsb_release -sr)
     elif [ -f /etc/redhat-release ]; then
-        OS=$(cat /etc/redhat-release | cut -d' ' -f1)
-        DISTRO="rhel"
+        OS="Red Hat Enterprise Linux"
+        VERSION=$(cat /etc/redhat-release | sed 's/.*release //' | sed 's/ .*//')
     else
         OS=$(uname -s)
-        DISTRO="unknown"
+        VERSION=$(uname -r)
     fi
+    
+    echo -e "${BLUE}Detected OS: $OS $VERSION${NC}"
 }
 
-# Install dependencies based on distribution
+# Install dependencies based on OS
 install_dependencies() {
     echo -e "${YELLOW}Installing system dependencies...${NC}"
     
-    case "$DISTRO" in
-        ubuntu|debian)
+    case "$OS" in
+        "Ubuntu"*|"Debian"*)
             apt-get update
-            apt-get install -y python3 python3-pip python3-venv curl
+            apt-get install -y python3 python3-pip python3-venv docker.io docker-compose-plugin curl sudo
             ;;
-        alpine)
-            apk update
-            apk add --no-cache python3 py3-pip python3-dev build-base curl
-            ;;
-        centos|rhel|fedora)
-            if command -v dnf &> /dev/null; then
-                dnf install -y python3 python3-pip python3-venv curl
+        "CentOS"*|"Red Hat"*|"Rocky"*|"AlmaLinux"*)
+            if command -v dnf >/dev/null 2>&1; then
+                dnf install -y python3 python3-pip docker docker-compose curl sudo
             else
-                yum install -y python3 python3-pip curl
+                yum install -y python3 python3-pip docker docker-compose curl sudo
             fi
             ;;
-        arch)
-            pacman -Sy --noconfirm python python-pip curl
+        "Amazon Linux"*)
+            yum update -y
+            yum install -y python3 python3-pip docker curl sudo
+            # Install docker-compose separately for Amazon Linux
+            curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            chmod +x /usr/local/bin/docker-compose
             ;;
         *)
-            echo -e "${YELLOW}Unknown distribution. Assuming dependencies are installed.${NC}"
+            echo -e "${YELLOW}Unknown OS. Please install Python3, pip, Docker, and docker-compose manually.${NC}"
             ;;
     esac
+    
+    # Start Docker service
+    systemctl enable docker
+    systemctl start docker
+    
+    echo -e "${GREEN}✅ Dependencies installed${NC}"
 }
 
-# Create user with distribution-specific options
-create_service_user() {
+# Create system user
+create_user() {
     echo -e "${YELLOW}Creating service user...${NC}"
     
     if ! id "$SERVICE_USER" &>/dev/null; then
-        case "$DISTRO" in
-            alpine)
-                adduser -r -s /bin/false -h $INSTALL_DIR -D $SERVICE_USER
-                ;;
-            *)
-                useradd -r -s /bin/false -d $INSTALL_DIR $SERVICE_USER 2>/dev/null || \
-                useradd -r -s /sbin/nologin -d $INSTALL_DIR $SERVICE_USER
-                ;;
-        esac
+        useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER"
         echo "Created user: $SERVICE_USER"
     else
         echo "User $SERVICE_USER already exists"
     fi
-}
-
-echo -e "${GREEN}Docker Auto-Updater Installation${NC}"
-echo "=================================="
-
-# Detect operating system
-detect_os
-echo -e "${BLUE}Detected OS: $OS ($DISTRO $VERSION)${NC}"
-
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then
-   echo -e "${RED}This script must be run as root${NC}"
-   exit 1
-fi
-
-# Install system dependencies
-install_dependencies
-
-# Check if Docker is installed
-if ! command -v docker >/dev/null 2>&1; then
-    echo -e "${RED}Docker is not installed. Please install Docker first.${NC}"
-    echo -e "${BLUE}Installation guides:${NC}"
-    echo "  Ubuntu/Debian: https://docs.docker.com/engine/install/ubuntu/"
-    echo "  Alpine: https://wiki.alpinelinux.org/wiki/Docker"
-    echo "  CentOS/RHEL: https://docs.docker.com/engine/install/centos/"
-    exit 1
-fi
-
-# Check if docker-compose is installed
-if ! command -v docker-compose >/dev/null 2>&1; then
-    echo -e "${YELLOW}docker-compose not found. Installing...${NC}"
     
-    case "$DISTRO" in
-        ubuntu|debian)
-            apt-get install -y docker-compose-plugin || {
+    # Add user to docker group
+    if getent group docker > /dev/null 2>&1; then
+        usermod -a -G docker "$SERVICE_USER"
+        echo "Added $SERVICE_USER to docker group"
     fi
     
     echo -e "${GREEN}✅ Service user configured${NC}"
