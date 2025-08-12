@@ -198,8 +198,9 @@ class DockerUpdater:
     def authenticate_ecr(self, region: str, aws_access_key_id: str = None, aws_secret_access_key: str = None) -> bool:
         """Authenticate with AWS ECR."""
         try:
-            # Use provided credentials or default AWS credentials
+            # Debug: Log what credentials we're using
             if aws_access_key_id and aws_secret_access_key:
+                self.logger.info(f"Using provided ECR credentials for region {region}: {aws_access_key_id[:10]}...")
                 ecr_client = boto3.client(
                     'ecr',
                     region_name=region,
@@ -207,6 +208,7 @@ class DockerUpdater:
                     aws_secret_access_key=aws_secret_access_key
                 )
             else:
+                self.logger.info(f"Using default AWS credentials for ECR in region {region}")
                 ecr_client = boto3.client('ecr', region_name=region)
             
             # Get authorization token
