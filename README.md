@@ -5,10 +5,11 @@ A production-ready Docker container auto-updater that runs on the host system an
 ## Features
 
 - **Multi-Registry Support**: Docker Hub, AWS ECR, Google Container Registry
-- **Dynamic Tag Patterns**: Support for `staging-*`, `prod-*` style tags with automatic latest selection  
-- **Semantic Versioning**: Intelligent semver parsing and comparison (`v1.2.3`, `release-2.0.0`)
+- **Dynamic Tag Selection**: Glob (`staging-*`) and regex (`^staging-[a-f0-9]{7}$`) with newest push detection
+- **Semantic Versioning**: Full SemVer 2.0 precedence (e.g., `v1.2.3`, prerelease ordering)
 - **Automatic Service Restart**: Updates docker-compose files and restarts services
-- **State Persistence**: Tracks current tags and digests to avoid redundant updates
+- **Reliability**: Health-gated restarts, rollback-on-failure, post-update digest verification
+- **State Safety**: Atomic state writes, rotating backups, and auto-recovery
 - **Systemd Integration**: Native systemd service with automatic startup and logging
 - **Security**: Dedicated user, minimal privileges, secure credential management
 - **Health Checks**: Docker connectivity and service health monitoring
@@ -120,6 +121,22 @@ DOCKER_HUB_PASSWORD=your_password
 # Application Settings
 LOG_LEVEL=INFO
 CHECK_INTERVAL=30
+LOG_FORMAT=plain   # or json
+
+# Reliability & Timeouts
+HEALTH_TIMEOUT=180        # seconds to wait for healthy containers
+HEALTH_STABLE=10          # seconds containers must remain healthy
+COMPOSE_TIMEOUT=120       # timeout for compose/docker subprocess calls
+STATE_BACKUPS=5           # number of timestamped backups to keep
+#STATE_BACKUP_DIR=/var/backups/docker-auto-updater
+
+# Observability
+#METRICS_PORT=9100        # Prometheus metrics port
+#WEBHOOK_URL=https://example.com/webhook
+
+# Controls
+#MAINTENANCE_WINDOW=02:00-04:00,14:00-15:30
+#PAUSE_UPDATES=0
 ```
 
 ## Service Management
@@ -188,6 +205,10 @@ pip install -r requirements.txt
 
 # Run directly
 python3 docker_updater.py
+
+# Single-run check (no loop) and test mode
+python3 docker_updater.py --once
+python3 docker_updater.py --test
 ```
 
 ## Security Considerations
@@ -212,6 +233,8 @@ The application logs structured information suitable for:
 - Prometheus metrics collection
 - ELK stack integration
 - Grafana dashboards
+
+Enable JSON logs with `LOG_FORMAT=json`. Expose Prometheus metrics by setting `METRICS_PORT`.
 
 ## Advanced Configuration
 
@@ -254,6 +277,17 @@ Automatically update to the latest tag matching a pattern:
   "name": "staging-app",
   "image": "myregistry/app:staging-abc123",
   "tag_pattern": "staging-*",
+  "registry_type": "ecr"
+}
+```
+
+Regex-based tag selection is also supported via `tag_regex`:
+
+```json
+{
+  "name": "staging-app",
+  "image": "myregistry/app:staging-abc123",
+  "tag_regex": "^staging-[a-f0-9]{7}$",
   "registry_type": "ecr"
 }
 ```
@@ -311,11 +345,18 @@ Built-in monitoring:
 
 ### Debug Mode
 
-Enable debug logging by modifying the logging level in `docker_updater.py`:
+Use `LOG_LEVEL=DEBUG` and `--once` for a single-cycle dry run:
 
-```python
-logging.basicConfig(level=logging.DEBUG, ...)
+```bash
+LOG_LEVEL=DEBUG python3 docker_updater.py --once --config ./updater_config.json
 ```
+
+For selection details, look for “Found latest tag…” or “Found latest semver…” in logs.
+
+### Reliability Notes
+- Updates run only within `MAINTENANCE_WINDOW` (if set), and can be paused with `PAUSE_UPDATES=1`.
+- On tag/semver updates: updater performs pull → restart → health-gated verify → digest check. If any step fails, it rolls back to the prior image and restarts.
+- State is written atomically and backed up (e.g., `updater_state-YYYYMMDDHHMMSS.json`), then pruned to `STATE_BACKUPS`.
 
 ## Production Deployment
 

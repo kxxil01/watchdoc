@@ -135,6 +135,7 @@ create_directories() {
     mkdir -p "$CONFIG_DIR"
     mkdir -p "$STATE_DIR"
     mkdir -p "$LOG_DIR"
+    mkdir -p "/var/run/docker-auto-updater"
     
     echo -e "${GREEN}✅ Directories created${NC}"
 }
@@ -185,6 +186,8 @@ copy_files() {
 
 # Logging Configuration
 LOG_LEVEL=INFO
+# plain or json
+LOG_FORMAT=plain
 
 # Update Check Interval (seconds)
 CHECK_INTERVAL=3600
@@ -201,6 +204,29 @@ CHECK_INTERVAL=3600
 # Docker Hub Configuration (if using private repos)
 #DOCKER_HUB_USERNAME=your_username
 #DOCKER_HUB_PASSWORD=your_password
+
+# Reliability tuning
+# Timeout waiting for healthy containers after restart (seconds)
+HEALTH_TIMEOUT=180
+# Seconds containers must remain healthy before confirming update
+HEALTH_STABLE=10
+# Timeout for compose and subprocess commands (seconds)
+COMPOSE_TIMEOUT=120
+
+# State retention
+# Number of timestamped state backups to keep
+STATE_BACKUPS=5
+# Optional separate directory for state backups
+#STATE_BACKUP_DIR=/var/backups/docker-auto-updater
+
+# Observability
+#METRICS_PORT=9100
+#WEBHOOK_URL=https://example.com/webhook
+
+# Controls
+# Comma-separated HH:MM-HH:MM windows (24h). Example: 02:00-04:00,14:00-15:30
+#MAINTENANCE_WINDOW=02:00-04:00
+#PAUSE_UPDATES=0
 EOF
         echo "✅ Default environment file created"
     fi

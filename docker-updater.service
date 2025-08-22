@@ -18,12 +18,13 @@ RestartSec=30
 StandardOutput=journal
 StandardError=journal
 
-# Security settings - relaxed to allow sudo execution
+# Security settings - relaxed to allow sudo for compose file edits
 NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=false
 ProtectHome=false
-ReadWritePaths=/var/lib/docker-auto-updater /var/log/docker-auto-updater /var/run/docker.sock /opt/docker-updater /app
+# Allow app lock path and standard dirs
+ReadWritePaths=/var/lib/docker-auto-updater /var/log/docker-auto-updater /var/run/docker.sock /opt/docker-auto-updater /var/run/docker-auto-updater
 
 [Install]
 WantedBy=multi-user.target

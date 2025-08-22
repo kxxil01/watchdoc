@@ -179,6 +179,12 @@ else
     echo "No temporary files found"
 fi
 
+# Remove app lock directory if present
+if [ -d "/var/run/docker-auto-updater" ]; then
+    rm -rf "/var/run/docker-auto-updater"
+    echo "Removed /var/run/docker-auto-updater"
+fi
+
 # Check for any remaining processes
 echo -e "${YELLOW}Checking for remaining processes...${NC}"
 REMAINING_PROCESSES=$(pgrep -f "docker_updater.py" || true)
