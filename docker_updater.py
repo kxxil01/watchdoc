@@ -430,13 +430,14 @@ class DockerUpdater:
     def restart_service(self, service: ServiceConfig) -> bool:
         """Restart a service using docker-compose."""
         try:
-            compose_dir = os.path.dirname(os.path.abspath(service.compose_file))
-            compose_file = os.path.basename(service.compose_file)
+            compose_path = os.path.abspath(service.compose_file)
+            # Use a safe working directory to avoid directory execute permission issues
+            safe_cwd = '/'
             cmd = self.get_compose_command()
 
             # Determine compose file owner for context/logging
             try:
-                st = os.stat(service.compose_file)
+                st = os.stat(compose_path)
                 owner = pwd.getpwuid(st.st_uid).pw_name
                 group = grp.getgrgid(st.st_gid).gr_name
                 self.logger.info(f"Restarting service: {service.name} as current user; compose owned by {owner}:{group}")
@@ -444,11 +445,11 @@ class DockerUpdater:
                 self.logger.info(f"Restarting service: {service.name}")
             
             # Ensure image is pulled with compose (pull-then-up)
-            self._run_compose([*cmd, '-f', compose_file, 'pull', service.compose_service], compose_dir)
+            self._run_compose([*cmd, '-f', compose_path, 'pull', service.compose_service], safe_cwd)
             # Stop the service (with fallback)
-            self._run_compose([*cmd, '-f', compose_file, 'stop', service.compose_service], compose_dir)
+            self._run_compose([*cmd, '-f', compose_path, 'stop', service.compose_service], safe_cwd)
             # Start the service (with fallback)
-            self._run_compose([*cmd, '-f', compose_file, 'up', '-d', service.compose_service], compose_dir)
+            self._run_compose([*cmd, '-f', compose_path, 'up', '-d', service.compose_service], safe_cwd)
             
             self.logger.info(f"Successfully restarted service: {service.name}")
             return True
