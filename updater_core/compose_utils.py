@@ -88,6 +88,21 @@ def update_compose_file(service, new_image: str, logger, compose_timeout_sec: Op
         # Try to replace atomically
         os.replace(tmp_path, compose_path)
         logger.info(f"Updated {compose_path} with new image: {new_image}")
+        # Restore ownership if known (owner may change with os.replace)
+        if orig_uid is not None and orig_gid is not None:
+            try:
+                os.chown(compose_path, orig_uid, orig_gid)
+            except PermissionError:
+                try:
+                    subprocess.run(
+                        ['sudo', '-n', '/bin/chown', f'{orig_uid}:{orig_gid}', compose_path],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=compose_timeout_sec,
+                    )
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"Failed to restore compose file ownership: {e.stderr}")
         return True
     except PermissionError:
         logger.info(f"Permission denied replacing {compose_path}, attempting sudo copy")
