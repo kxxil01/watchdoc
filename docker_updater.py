@@ -444,12 +444,8 @@ class DockerUpdater:
             except Exception:
                 self.logger.info(f"Restarting service: {service.name}")
             
-            # Ensure image is pulled with compose (pull-then-up)
-            self._run_compose([*cmd, '-f', compose_path, 'pull', service.compose_service], safe_cwd)
-            # Stop the service (with fallback)
-            self._run_compose([*cmd, '-f', compose_path, 'stop', service.compose_service], safe_cwd)
-            # Start the service (with fallback)
-            self._run_compose([*cmd, '-f', compose_path, 'up', '-d', service.compose_service], safe_cwd)
+            # Single up command: pull + recreate as needed
+            self._run_compose([*cmd, '-f', compose_path, 'up', '-d', '--pull', 'always', service.compose_service], safe_cwd)
             
             self.logger.info(f"Successfully restarted service: {service.name}")
             return True
