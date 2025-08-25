@@ -20,22 +20,32 @@ def authenticate_ecr(
     try:
         # Always use timezone-aware UTC datetimes
         now = datetime.now(timezone.utc)
+
+        def to_aware_utc(dt):
+            if dt is None:
+                return None
+            if getattr(dt, 'tzinfo', None) is None:
+                # Assume UTC when tzinfo missing (ECR returns UTC)
+                return dt.replace(tzinfo=timezone.utc)
+            try:
+                return dt.astimezone(timezone.utc)
+            except Exception:
+                # Fallback: treat as UTC
+                return dt.replace(tzinfo=timezone.utc)
+
         cache = ecr_auth_cache.get(region)
         # Normalize cached timestamps to aware UTC if present
         if cache and cache.get('expires'):
-            expires = cache['expires']
-            if getattr(expires, 'tzinfo', None) is None:
-                expires = expires.replace(tzinfo=timezone.utc)
-                cache['expires'] = expires
+            cache['expires'] = to_aware_utc(cache['expires'])
+        if cache and cache.get('last_login'):
+            cache['last_login'] = to_aware_utc(cache['last_login'])
+
         if cache and cache.get('expires') and now < cache['expires'] - timedelta(minutes=5):
             # Token valid; re-login only if it's been a while
             username = cache['username']
             password = cache['password']
             endpoint = cache['endpoint']
             last_login = cache.get('last_login')
-            if last_login is not None and getattr(last_login, 'tzinfo', None) is None:
-                last_login = last_login.replace(tzinfo=timezone.utc)
-                cache['last_login'] = last_login
             if not last_login or (now - last_login) > timedelta(hours=1):
                 login_result = subprocess.run(
                     ['docker', 'login', '--username', username, '--password-stdin', endpoint],
@@ -68,11 +78,7 @@ def authenticate_ecr(
         auth = response['authorizationData'][0]
         token = auth['authorizationToken']
         endpoint = auth['proxyEndpoint']
-        expires = auth.get('expiresAt')
-        if expires is None:
-            expires = now + timedelta(hours=12)
-        elif getattr(expires, 'tzinfo', None) is None:
-            expires = expires.replace(tzinfo=timezone.utc)
+        expires = to_aware_utc(auth.get('expiresAt')) or (now + timedelta(hours=12))
         username, password = base64.b64decode(token).decode().split(':')
         login_result = subprocess.run(
             ['docker', 'login', '--username', username, '--password-stdin', endpoint],
@@ -86,7 +92,7 @@ def authenticate_ecr(
                 'username': username,
                 'password': password,
                 'endpoint': endpoint,
-                'expires': expires,
+                'expires': to_aware_utc(expires),
                 'last_login': now,
             }
             logger.info(f"ECR login succeeded for region {region}")

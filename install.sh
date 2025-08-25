@@ -173,21 +173,37 @@ copy_files() {
     fi
     echo "✅ Application files copied"
     
-    # Copy configuration template if it exists
+    # Copy configuration template if not present (preserve existing)
     if [ -f "$SCRIPT_DIR/updater_config.json" ]; then
-        cp "$SCRIPT_DIR/updater_config.json" "$CONFIG_DIR/"
-        echo "✅ Configuration template copied"
+        if [ -f "$CONFIG_DIR/updater_config.json" ]; then
+            echo "ℹ️  Preserving existing config: $CONFIG_DIR/updater_config.json"
+            # Still provide an updated example next to it for reference
+            cp "$SCRIPT_DIR/updater_config.json" "$CONFIG_DIR/updater_config.json.example"
+            echo "✅ Updated example: $CONFIG_DIR/updater_config.json.example"
+        else
+            cp "$SCRIPT_DIR/updater_config.json" "$CONFIG_DIR/updater_config.json"
+            echo "✅ Configuration template installed"
+        fi
     else
         echo -e "${YELLOW}Warning: updater_config.json not found, you'll need to create it manually${NC}"
     fi
     
     # Handle environment file
     if [ -f "$SCRIPT_DIR/.env.example" ]; then
-        cp "$SCRIPT_DIR/.env.example" "$CONFIG_DIR/.env"
-        echo "✅ Environment template copied"
+        if [ -f "$CONFIG_DIR/.env" ]; then
+            echo "ℹ️  Preserving existing env: $CONFIG_DIR/.env"
+            cp "$SCRIPT_DIR/.env.example" "$CONFIG_DIR/.env.example"
+            echo "✅ Updated example: $CONFIG_DIR/.env.example"
+        else
+            cp "$SCRIPT_DIR/.env.example" "$CONFIG_DIR/.env"
+            echo "✅ Environment template installed"
+        fi
     else
-        echo -e "${YELLOW}Creating default environment file...${NC}"
-        cat > "$CONFIG_DIR/.env" << 'EOF'
+        if [ -f "$CONFIG_DIR/.env" ]; then
+            echo "ℹ️  Preserving existing env: $CONFIG_DIR/.env"
+        else
+            echo -e "${YELLOW}Creating default environment file...${NC}"
+            cat > "$CONFIG_DIR/.env" << 'EOF'
 # Docker Auto-Updater Environment Configuration
 
 # Logging Configuration
@@ -234,7 +250,8 @@ STATE_BACKUPS=5
 #MAINTENANCE_WINDOW=02:00-04:00
 #PAUSE_UPDATES=0
 EOF
-        echo "✅ Default environment file created"
+            echo "✅ Default environment file created"
+        fi
     fi
     
     echo -e "${GREEN}✅ Files copied successfully${NC}"
