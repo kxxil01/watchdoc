@@ -596,12 +596,35 @@ class DockerUpdater:
         nu.notify_event(event_type, payload, self.logger)
 
     def perform_update_with_rollback(self, service: ServiceConfig, old_image: str, new_image: str, new_digest: str) -> bool:
+        # Acquire a per-compose lock, falling back to a writable locks dir if needed
+        lock_fd = None
         lock_path = service.compose_file + '.lock'
-        with open(lock_path, 'w') as lock_fd:
-            try:
-                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
-            except Exception:
-                pass
+        try:
+            lock_fd = open(lock_path, 'w')
+        except PermissionError:
+            # Fallback to a central locks directory
+            alt_dirs = ['/var/run/docker-auto-updater/locks', '/tmp/docker-auto-updater/locks']
+            safe_name = service.compose_file.replace('/', '_').replace(':', '_') + '.lock'
+            for d in alt_dirs:
+                try:
+                    os.makedirs(d, exist_ok=True)
+                    lock_path = os.path.join(d, safe_name)
+                    lock_fd = open(lock_path, 'w')
+                    self.logger.info(f"Using fallback lock path for {service.name}: {lock_path}")
+                    break
+                except Exception:
+                    lock_fd = None
+                    continue
+        except Exception:
+            lock_fd = None
+
+        try:
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+                except Exception:
+                    pass
+
             # Update to new image
             if not self.update_compose_file(service, new_image):
                 return False
@@ -668,157 +691,12 @@ class DockerUpdater:
                 'new_image': new_image,
             })
             return True
-
-        try:
-            services = data.get('services', {})
-            if service.compose_service not in services:
-                self.logger.error(f"Service '{service.compose_service}' not found in {compose_path}")
-                return False
-            svc = services[service.compose_service]
-            old_image = svc.get('image')
-            if old_image == new_image:
-                self.logger.debug("Image already up to date; no changes to compose file")
-                return False
-            svc['image'] = new_image
-        except Exception as e:
-            self.logger.error(f"Failed to update YAML structure: {e}")
-            return False
-
-        # Capture original ownership and mode to restore later if needed
-        try:
-            st = os.stat(compose_path)
-            orig_uid, orig_gid = st.st_uid, st.st_gid
-            orig_mode = st.st_mode & 0o777
-        except Exception:
-            orig_uid = orig_gid = None
-            orig_mode = None
-
-        # Write to a temp file, then move into place (sudo cp if needed)
-        tmp = None
-        try:
-            tmp = tempfile.NamedTemporaryFile('w', delete=False, prefix='docker-compose-', suffix='.yml')
-            safe_dump(data, tmp, default_flow_style=False, sort_keys=False)
-            tmp_path = tmp.name
-            tmp.close()
-            if orig_mode is not None:
-                try:
-                    os.chmod(tmp_path, orig_mode)
-                except Exception:
-                    pass
-        except Exception as e:
-            if tmp and not tmp.closed:
-                tmp.close()
-            self.logger.error(f"Failed to write temporary compose file: {e}")
-            return False
-
-        try:
-            # Try to replace atomically
-            os.replace(tmp_path, compose_path)
-            self.logger.info(f"Updated {compose_path} with new image: {new_image}")
-            return True
-        except PermissionError:
-            self.logger.info(f"Permission denied replacing {compose_path}, attempting sudo copy")
+        finally:
             try:
-                subprocess.run(['sudo', '/bin/cp', tmp_path, compose_path], check=True, capture_output=True, text=True, timeout=self.compose_timeout_sec)
-                self.logger.info(f"Updated {compose_path} via sudo with new image: {new_image}")
-                # Restore ownership if known
-                if orig_uid is not None and orig_gid is not None:
-                    try:
-                        subprocess.run(['sudo', '/bin/chown', f'{orig_uid}:{orig_gid}', compose_path], check=True, capture_output=True, text=True, timeout=self.compose_timeout_sec)
-                    except subprocess.CalledProcessError as e:
-                        self.logger.warning(f"Failed to restore compose file ownership: {e.stderr}")
-                return True
-            except subprocess.CalledProcessError as e:
-                self.logger.error(f"Failed to copy compose file via sudo: {e.stderr}")
-                return False
-            finally:
-                try:
-                    os.remove(tmp_path)
-                except Exception:
-                    pass
-        except Exception as e:
-            self.logger.error(f"Failed to update compose file {compose_path}: {e}")
-            try:
-                os.remove(tmp_path)
+                if lock_fd is not None:
+                    lock_fd.close()
             except Exception:
                 pass
-            return False
-
-        try:
-            services = data.get('services', {})
-            if service.compose_service not in services:
-                self.logger.error(f"Service '{service.compose_service}' not found in {compose_path}")
-                return False
-            svc = services[service.compose_service]
-            old_image = svc.get('image')
-            if old_image == new_image:
-                self.logger.debug("Image already up to date; no changes to compose file")
-                return False
-            svc['image'] = new_image
-        except Exception as e:
-            self.logger.error(f"Failed to update YAML structure: {e}")
-            return False
-
-        # Capture original ownership and mode to restore later if needed
-        try:
-            st = os.stat(compose_path)
-            orig_uid, orig_gid = st.st_uid, st.st_gid
-            orig_mode = st.st_mode & 0o777
-        except Exception:
-            orig_uid = orig_gid = None
-            orig_mode = None
-
-        # Write to a temp file, then move into place (sudo cp if needed)
-        tmp = None
-        try:
-            tmp = tempfile.NamedTemporaryFile('w', delete=False, prefix='docker-compose-', suffix='.yml')
-            safe_dump(data, tmp, default_flow_style=False, sort_keys=False)
-            tmp_path = tmp.name
-            tmp.close()
-            if orig_mode is not None:
-                try:
-                    os.chmod(tmp_path, orig_mode)
-                except Exception:
-                    pass
-        except Exception as e:
-            if tmp and not tmp.closed:
-                tmp.close()
-            self.logger.error(f"Failed to write temporary compose file: {e}")
-            return False
-
-        try:
-            # Try to replace atomically
-            os.replace(tmp_path, compose_path)
-            self.logger.info(f"Updated {compose_path} with new image: {new_image}")
-            return True
-        except PermissionError:
-            self.logger.info(f"Permission denied replacing {compose_path}, attempting sudo copy")
-            try:
-                subprocess.run(['sudo', '/bin/cp', tmp_path, compose_path], check=True, capture_output=True, text=True)
-                self.logger.info(f"Updated {compose_path} via sudo with new image: {new_image}")
-                # Restore ownership if known
-                if orig_uid is not None and orig_gid is not None:
-                    try:
-                        subprocess.run(['sudo', '/bin/chown', f'{orig_uid}:{orig_gid}', compose_path], check=True, capture_output=True, text=True)
-                    except subprocess.CalledProcessError as e:
-                        self.logger.warning(f"Failed to restore compose file ownership: {e.stderr}")
-                return True
-            except subprocess.CalledProcessError as e:
-                self.logger.error(f"Failed to copy compose file via sudo: {e.stderr}")
-                return False
-            finally:
-                try:
-                    os.remove(tmp_path)
-                except Exception:
-                    pass
-        except Exception as e:
-            self.logger.error(f"Failed to update compose file {compose_path}: {e}")
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
-            return False
-
     # Second definition kept historically; delegate to helper for clarity
     def update_compose_file(self, service: ServiceConfig, new_image: str) -> bool:  # type: ignore[no-redef]
         return cu_update_compose_file(service, new_image, self.logger, getattr(self, 'compose_timeout_sec', None))

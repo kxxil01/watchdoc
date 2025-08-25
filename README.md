@@ -66,6 +66,7 @@ CONFIG_FILE=./local_updater_config.json LOG_LEVEL=DEBUG python3 docker_updater.p
 - Env file: `/etc/docker-auto-updater/.env`
 - State: `/var/lib/docker-auto-updater/updater_state.json`
 - Logs: `/var/log/docker-auto-updater/docker_updater.log`
+- Locks: defaults to `<compose_file>.lock`; if not writable, falls back to `/var/run/docker-auto-updater/locks/<safe-name>.lock` then `/tmp/docker-auto-updater/locks/<safe-name>.lock`
 
 ### Example `updater_config.json`
 
@@ -190,6 +191,11 @@ Minimal IAM policy permissions:
 }
 ```
 
+Behavior notes:
+- The updater caches ECR authorization tokens and uses timezone‑aware UTC comparisons for expiry.
+- While a token is valid, it re‑logs into Docker at most once per hour to refresh the client session.
+- Logs include `ECR login succeeded for region ...` and, on reuse, `ECR re-login succeeded ...`.
+
 Per‑service `registry_config` example:
 
 ```json
@@ -270,6 +276,7 @@ python -m pytest -q
 - Compose not found: install Docker Compose plugin or `docker-compose` binary
 - Auth errors: validate credentials; try the manual auth tests above
 - State fallback: if system path isn’t writable, state is written to `./updater_state.json`
+- Lockfile permissions: if `<compose_file>.lock` cannot be created (read‑only dirs), the updater automatically switches to `/var/run/docker-auto-updater/locks` or `/tmp/docker-auto-updater/locks` and logs `Using fallback lock path ...`.
 
 ## Production Notes
 
@@ -280,4 +287,3 @@ python -m pytest -q
 ## License
 
 MIT License — see `LICENSE`
-

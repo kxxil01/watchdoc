@@ -1,7 +1,7 @@
 import os
 import base64
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import boto3
 from google.auth import default
@@ -18,14 +18,24 @@ def authenticate_ecr(
     aws_secret_access_key: str | None = None,
 ) -> bool:
     try:
-        now = datetime.utcnow()
+        # Always use timezone-aware UTC datetimes
+        now = datetime.now(timezone.utc)
         cache = ecr_auth_cache.get(region)
+        # Normalize cached timestamps to aware UTC if present
+        if cache and cache.get('expires'):
+            expires = cache['expires']
+            if getattr(expires, 'tzinfo', None) is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+                cache['expires'] = expires
         if cache and cache.get('expires') and now < cache['expires'] - timedelta(minutes=5):
             # Token valid; re-login only if it's been a while
             username = cache['username']
             password = cache['password']
             endpoint = cache['endpoint']
             last_login = cache.get('last_login')
+            if last_login is not None and getattr(last_login, 'tzinfo', None) is None:
+                last_login = last_login.replace(tzinfo=timezone.utc)
+                cache['last_login'] = last_login
             if not last_login or (now - last_login) > timedelta(hours=1):
                 login_result = subprocess.run(
                     ['docker', 'login', '--username', username, '--password-stdin', endpoint],
@@ -58,7 +68,11 @@ def authenticate_ecr(
         auth = response['authorizationData'][0]
         token = auth['authorizationToken']
         endpoint = auth['proxyEndpoint']
-        expires = auth.get('expiresAt') or (datetime.utcnow() + timedelta(hours=12))
+        expires = auth.get('expiresAt')
+        if expires is None:
+            expires = now + timedelta(hours=12)
+        elif getattr(expires, 'tzinfo', None) is None:
+            expires = expires.replace(tzinfo=timezone.utc)
         username, password = base64.b64decode(token).decode().split(':')
         login_result = subprocess.run(
             ['docker', 'login', '--username', username, '--password-stdin', endpoint],
@@ -152,4 +166,3 @@ def authenticate_registry(service, logger, compose_timeout_sec, ecr_auth_cache, 
                 return False
         return True
     return True
-
