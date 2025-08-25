@@ -47,6 +47,7 @@ def authenticate_ecr(
             endpoint = cache['endpoint']
             last_login = cache.get('last_login')
             if not last_login or (now - last_login) > timedelta(hours=1):
+                # Re-login for current user
                 login_result = subprocess.run(
                     ['docker', 'login', '--username', username, '--password-stdin', endpoint],
                     input=password,
@@ -60,6 +61,19 @@ def authenticate_ecr(
                 else:
                     cache['last_login'] = now
                     logger.info(f"ECR re-login succeeded for {region}")
+                    # Also re-login under sudo for compose runs that escalate
+                    try:
+                        root_login = subprocess.run(
+                            ['sudo', '-n', 'docker', 'login', '--username', username, '--password-stdin', endpoint],
+                            input=password,
+                            text=True,
+                            capture_output=True,
+                            timeout=compose_timeout_sec,
+                        )
+                        if root_login.returncode != 0:
+                            logger.debug(f"Root ECR re-login warning: {root_login.stderr}")
+                    except Exception as se:
+                        logger.debug(f"Root ECR re-login skipped: {se}")
                     return True
             else:
                 return True
@@ -96,6 +110,19 @@ def authenticate_ecr(
                 'last_login': now,
             }
             logger.info(f"ECR login succeeded for region {region}")
+            # Also login under sudo so root has credentials for compose
+            try:
+                root_login = subprocess.run(
+                    ['sudo', '-n', 'docker', 'login', '--username', username, '--password-stdin', endpoint],
+                    input=password,
+                    text=True,
+                    capture_output=True,
+                    timeout=compose_timeout_sec,
+                )
+                if root_login.returncode != 0:
+                    logger.debug(f"Root ECR login warning: {root_login.stderr}")
+            except Exception as se:
+                logger.debug(f"Root ECR login skipped: {se}")
             return True
         else:
             logger.error(f"ECR authentication failed: {login_result.stderr}")
