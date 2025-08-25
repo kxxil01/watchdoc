@@ -2,45 +2,31 @@
   "check_interval": 30,
   "services": [
     {
-      "name": "social-media-aggregator",
-      "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/social-media-aggregator",
-      "compose_file": "/app/social-media-aggregator/docker-compose-prod.yml",
-      "compose_service": "social-media-aggregator",
+      "name": "service-name",
+      "image": "image-registry-url",
+      "compose_file": "compose-file-path",
+      "compose_service": "compose-service-name",
       "registry_type": "ecr",
       "tag_pattern": "staging-*",
       "enabled": true,
       "registry_config": {
-        "region": "us-east-2",
-        "aws_access_key_id": "${AWS_ACCESS_KEY_ID}",
-        "aws_secret_access_key": "${AWS_SECRET_ACCESS_KEY}"
+        "region": "region",
+        "aws_access_key_id": "aws-access-key-id",
+        "aws_secret_access_key": "aws-secret-access-key"
       }
     },
     {
-      "name": "becreatives-proxy-server",
-      "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/becreatives-proxy-server",
-      "compose_file": "/app/backend-core/proxy-server/docker-compose-prod.yml",
-      "compose_service": "proxy-server",
+      "name": "service-name",
+      "image": "image-registry-url",
+      "compose_file": "compose-file-path",
+      "compose_service": "compose-service-name",
       "registry_type": "ecr",
-      "tag_pattern": "staging-*",
+      "tag_pattern": "v*",
       "enabled": true,
       "registry_config": {
-        "region": "us-east-2",
-        "aws_access_key_id": "${AWS_ACCESS_KEY_ID}",
-        "aws_secret_access_key": "${AWS_SECRET_ACCESS_KEY}"
-      }
-    },
-    {
-      "name": "accounting",
-      "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/accounting",
-      "compose_file": "/app/accounting/docker-compose-prod.yml",
-      "compose_service": "accounting",
-      "registry_type": "ecr",
-      "tag_pattern": "staging-*",
-      "enabled": true,
-      "registry_config": {
-        "region": "us-east-2",
-        "aws_access_key_id": "${AWS_ACCESS_KEY_ID}",
-        "aws_secret_access_key": "${AWS_SECRET_ACCESS_KEY}"
+        "region": "region",
+        "aws_access_key_id": "aws-access-key-id",
+        "aws_secret_access_key": "aws-secret-access-key"
       }
     }
   ]
