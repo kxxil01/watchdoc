@@ -147,13 +147,18 @@ def get_compose_command(shutil_module) -> List[str]:
 
 
 def run_compose(args: List[str], cwd: str, logger, timeout: Optional[int] = None) -> None:
-    """Run compose command with fallback to sudo (non-interactive)."""
+    """Run compose command with fallback to sudo (non-interactive).
+
+    Falls back to sudo not only on non-zero exit, but also on OS-level
+    permission errors (e.g., directory traversal without +x) that surface as
+    OSError from subprocess.run.
+    """
     try:
         subprocess.run(
             args, cwd=cwd, capture_output=True, text=True, check=True, timeout=timeout
         )
         return
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, OSError) as e:
         try:
             logger.info("Retrying compose command with sudo")
             subprocess.run(
@@ -166,4 +171,5 @@ def run_compose(args: List[str], cwd: str, logger, timeout: Optional[int] = None
             )
             return
         except subprocess.CalledProcessError as e2:
-            raise RuntimeError(f"Compose command failed: {e2.stderr or e.stderr}")
+            stderr = getattr(e2, 'stderr', '') or getattr(e, 'stderr', '') or str(e2) or str(e)
+            raise RuntimeError(f"Compose command failed: {stderr}")
