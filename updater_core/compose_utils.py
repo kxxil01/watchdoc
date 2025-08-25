@@ -14,6 +14,34 @@ def update_compose_file(service, new_image: str, logger, compose_timeout_sec: Op
     try:
         with open(compose_path, 'r') as f:
             data = safe_load(f)
+    except PermissionError as e:
+        # Attempt sudo read via cat if allowed
+        try:
+            result = subprocess.run(
+                ['/bin/cat', compose_path],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            try:
+                result = subprocess.run(
+                    ['sudo', '-n', '/bin/cat', compose_path],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=compose_timeout_sec,
+                )
+            except subprocess.CalledProcessError as se:
+                logger.error(f"Failed to read compose file {compose_path} with sudo: {se.stderr or se}")
+                return False
+        try:
+            data = safe_load(result.stdout)
+            if data is None:
+                data = {}
+        except Exception as pe:
+            logger.error(f"Failed to parse compose YAML from {compose_path}: {pe}")
+            return False
     except Exception as e:
         logger.error(f"Failed to read compose file {compose_path}: {e}")
         return False
