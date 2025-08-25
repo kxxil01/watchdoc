@@ -165,6 +165,12 @@ copy_files() {
     # Copy application files
     cp "$SCRIPT_DIR/docker_updater.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
+    # Copy core helper package
+    if [ -d "$SCRIPT_DIR/updater_core" ]; then
+        rm -rf "$INSTALL_DIR/updater_core"
+        cp -r "$SCRIPT_DIR/updater_core" "$INSTALL_DIR/"
+        echo "✅ Core helpers copied"
+    fi
     echo "✅ Application files copied"
     
     # Copy configuration template if it exists

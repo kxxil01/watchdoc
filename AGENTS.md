@@ -6,7 +6,7 @@
 - `install.sh` / `uninstall.sh`: Install/uninstall as a systemd-managed service.
 - `docker-updater.service`, `docker-updater-sudoers`: Service unit and sudo rules used by the installer.
 - `.env.example`, `updater_config.json`: Configuration templates; copy and edit for your environment.
-- `DYNAMIC_TAGS.md`, `REGISTRY_SETUP.md`, `README.md`: Feature docs and setup guides.
+- `README.md`: Unified feature docs and setup guide.
 - Runtime paths: `/etc/docker-auto-updater/*.json,.env`, `/var/lib/docker-auto-updater/updater_state.json`, `/var/log/docker-auto-updater/docker_updater.log`.
 
 ## Build, Test, and Development Commands
@@ -28,7 +28,7 @@
 
 ## Commit & Pull Request Guidelines
 - Commit style: prefer Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`). Keep messages imperative and scoped.
-- PRs must include: clear description, motivation, before/after behavior, local verification steps (commands/logs), and any config or path changes. Update docs when behavior changes (`README.md`, `REGISTRY_SETUP.md`, `DYNAMIC_TAGS.md`).
+- PRs must include: clear description, motivation, before/after behavior, local verification steps (commands/logs), and any config or path changes. Update docs when behavior changes (`README.md`).
 
 ## Security & Configuration Tips
 - Do not commit secrets. Use `.env` outside version control; start from `.env.example`.
