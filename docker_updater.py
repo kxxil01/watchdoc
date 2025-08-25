@@ -632,8 +632,14 @@ class DockerUpdater:
                 self.logger.error(f"Health check failed after update for {service.name}, rolling back")
                 if getattr(self, 'counter_failures', None):
                     self.counter_failures.inc()
-                # rollback
-                if self.update_compose_file(service, old_image) and self.restart_service(service):
+                # Attempt rollback only if previous image is actually available
+                can_rollback = False
+                try:
+                    prev_digest = self.get_image_digest(old_image)
+                    can_rollback = bool(prev_digest)
+                except Exception:
+                    can_rollback = False
+                if can_rollback and self.update_compose_file(service, old_image) and self.restart_service(service):
                     if getattr(self, 'counter_rollbacks', None):
                         self.counter_rollbacks.inc()
                     self._notify_event('rollback', {
@@ -645,7 +651,7 @@ class DockerUpdater:
                     })
                     return False
                 else:
-                    self.logger.error(f"Rollback failed for {service.name}")
+                    self.logger.error(f"Rollback not possible for {service.name} (previous image unavailable or restart failed)")
                     return False
             # Post-update verification: running digest should match
             containers = self._find_service_containers(service)
@@ -653,30 +659,33 @@ class DockerUpdater:
             for c in containers:
                 try:
                     c.reload()
-                    img_id = c.image.id  # e.g., 'sha256:...'
-                    if new_digest and not img_id.endswith(new_digest.split(':')[-1]):
+                    digest_suffix = new_digest.split(':')[-1] if new_digest else None
+                    matched = False
+                    try:
+                        repo_digests = getattr(c.image, 'attrs', {}).get('RepoDigests') or []
+                        for rd in repo_digests:
+                            # rd like 'repo@sha256:...'
+                            if 'sha256:' in rd and digest_suffix and rd.split('@')[-1].endswith(digest_suffix):
+                                matched = True
+                                break
+                    except Exception:
+                        pass
+                    if not matched and digest_suffix:
+                        # last-resort: compare image id suffix
+                        try:
+                            img_id = c.image.id  # e.g., 'sha256:...'
+                            if img_id and img_id.endswith(digest_suffix):
+                                matched = True
+                        except Exception:
+                            pass
+                    if digest_suffix and not matched:
                         mismatch = True
                         break
                 except Exception:
                     pass
             if mismatch:
-                self.logger.error(f"Digest mismatch detected after update for {service.name}, rolling back")
-                if getattr(self, 'counter_failures', None):
-                    self.counter_failures.inc()
-                if self.update_compose_file(service, old_image) and self.restart_service(service):
-                    if getattr(self, 'counter_rollbacks', None):
-                        self.counter_rollbacks.inc()
-                    self._notify_event('rollback', {
-                        'service': service.name,
-                        'compose_service': service.compose_service,
-                        'compose_file': service.compose_file,
-                        'old_image': old_image,
-                        'failed_image': new_image,
-                    })
-                    return False
-                else:
-                    self.logger.error(f"Rollback failed for {service.name}")
-                    return False
+                # Only warn; RepoDigests vs ImageID can legitimately differ from manifest digest
+                self.logger.warning(f"Digest mismatch detected after update for {service.name}; proceeding since health passed")
             # success
             if getattr(self, 'counter_updates', None):
                 self.counter_updates.inc()
