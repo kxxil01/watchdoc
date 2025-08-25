@@ -144,7 +144,7 @@ create_directories() {
 verify_files() {
     echo -e "${YELLOW}Checking required files...${NC}"
     
-    REQUIRED_FILES=("docker_updater.py" "docker-updater.service" "docker-updater-sudoers" "requirements.txt")
+    REQUIRED_FILES=("docker_updater.py" "docker-updater.service" "docker-updater-sudoers" "requirements.txt" "docker-updater.logrotate")
     
     for file in "${REQUIRED_FILES[@]}"; do
         if [ ! -f "$SCRIPT_DIR/$file" ]; then
@@ -283,6 +283,15 @@ EOF
     echo -e "${GREEN}✅ Sudoers configuration installed${NC}"
 }
 
+# Install logrotate configuration
+install_logrotate() {
+    echo -e "${YELLOW}Installing logrotate configuration...${NC}"
+    local dest="/etc/logrotate.d/docker-auto-updater"
+    cp "$SCRIPT_DIR/docker-updater.logrotate" "$dest"
+    chmod 644 "$dest"
+    echo "✅ Logrotate configuration installed at $dest"
+}
+
 # Set file permissions
 set_permissions() {
     echo -e "${YELLOW}Setting file permissions...${NC}"
@@ -408,6 +417,7 @@ main() {
     create_directories
     copy_files
     install_sudoers
+    install_logrotate
     set_permissions
     install_python_deps
     install_service

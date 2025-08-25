@@ -66,6 +66,7 @@ CONFIG_FILE=./local_updater_config.json LOG_LEVEL=DEBUG python3 docker_updater.p
 - Env file: `/etc/docker-auto-updater/.env`
 - State: `/var/lib/docker-auto-updater/updater_state.json`
 - Logs: `/var/log/docker-auto-updater/docker_updater.log`
+  - Rotated automatically via logrotate (daily or at 10MB, keep 14 archives)
 - Locks: defaults to `<compose_file>.lock`; if not writable, falls back to `/var/run/docker-auto-updater/locks/<safe-name>.lock` then `/tmp/docker-auto-updater/locks/<safe-name>.lock`
 
 ### Example `updater_config.json`
