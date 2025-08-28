@@ -7,11 +7,18 @@ docker-updater ALL=(root) NOPASSWD: /usr/local/bin/docker-compose
 docker-updater ALL=(root) NOPASSWD: /usr/bin/docker-compose
 docker-updater ALL=(root) NOPASSWD: /bin/docker-compose
 
+# Allow docker-updater to run docker CLI (for 'docker compose' plugin)
+docker-updater ALL=(root) NOPASSWD: /usr/bin/docker
+docker-updater ALL=(root) NOPASSWD: /usr/local/bin/docker
+docker-updater ALL=(root) NOPASSWD: /bin/docker
+
 # Allow docker-updater to modify docker-compose files in common locations
 docker-updater ALL=(root) NOPASSWD: /bin/cp /tmp/docker-compose-*.yml /opt/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/cp /tmp/docker-compose-*.yml /opt/*/*/docker-compose*.yml
 docker-updater ALL=(root) NOPASSWD: /bin/cp /tmp/docker-compose-*.yml /home/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/cp /tmp/docker-compose-*.yml /home/*/*/docker-compose*.yml
 docker-updater ALL=(root) NOPASSWD: /bin/cp /tmp/docker-compose-*.yml /var/*/docker-compose*.yml
-docker-updater ALL=(root) NOPASSWD: /bin/cp /tmp/docker-compose-*.yml /app/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/cp /tmp/docker-compose-*.yml /var/*/*/docker-compose*.yml
 
 # Allow docker-updater to change ownership of temporary files
 docker-updater ALL=(root) NOPASSWD: /bin/chown docker-updater\:docker /tmp/docker-compose-*.yml
@@ -21,10 +28,33 @@ docker-updater ALL=(root) NOPASSWD: /bin/chown docker-updater\:* /tmp/docker-com
 docker-updater ALL=(root) NOPASSWD: /bin/rm /tmp/docker-compose-*.yml
 
 # Allow docker-updater to read docker-compose files
-docker-updater ALL=(root) NOPASSWD: /bin/cat /opt/*/docker-compose.yml
-docker-updater ALL=(root) NOPASSWD: /bin/cat /home/*/docker-compose.yml
+docker-updater ALL=(root) NOPASSWD: /bin/cat /opt/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/cat /opt/*/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/cat /home/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/cat /home/*/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/cat /var/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/cat /var/*/*/docker-compose*.yml
 
-# Allow docker-updater to use sed for in-place editing of compose files
-docker-updater ALL=(root) NOPASSWD: /bin/sed -i * /app/*/docker-compose*.yml
-docker-updater ALL=(root) NOPASSWD: /usr/bin/sed -i * /app/*/docker-compose*.yml
-docker-updater ALL=(root) NOPASSWD: /bin/cat /var/*/docker-compose.yml
+# Allow docker-updater to use sed for in-place editing of compose files (if needed)
+docker-updater ALL=(root) NOPASSWD: /bin/sed -i * /opt/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /usr/bin/sed -i * /opt/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/sed -i * /opt/*/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /usr/bin/sed -i * /opt/*/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/sed -i * /var/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /usr/bin/sed -i * /var/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/sed -i * /var/*/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /usr/bin/sed -i * /var/*/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/sed -i * /home/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /usr/bin/sed -i * /home/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/sed -i * /home/*/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /usr/bin/sed -i * /home/*/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/cat /var/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/cat /var/*/*/docker-compose*.yml
+
+# Allow chown to restore ownership of compose files after updates
+docker-updater ALL=(root) NOPASSWD: /bin/chown * /opt/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/chown * /opt/*/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/chown * /var/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/chown * /var/*/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/chown * /home/*/docker-compose*.yml
+docker-updater ALL=(root) NOPASSWD: /bin/chown * /home/*/*/docker-compose*.yml

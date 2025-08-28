@@ -1,0 +1,12 @@
+/var/log/docker-auto-updater/docker_updater.log {
+    su docker-updater docker
+    daily
+    rotate 14
+    size 10M
+    missingok
+    compress
+    delaycompress
+    notifempty
+    copytruncate
+}
+

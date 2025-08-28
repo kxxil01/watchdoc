@@ -135,6 +135,7 @@ create_directories() {
     mkdir -p "$CONFIG_DIR"
     mkdir -p "$STATE_DIR"
     mkdir -p "$LOG_DIR"
+    mkdir -p "/var/run/docker-auto-updater"
     
     echo -e "${GREEN}✅ Directories created${NC}"
 }
@@ -143,7 +144,7 @@ create_directories() {
 verify_files() {
     echo -e "${YELLOW}Checking required files...${NC}"
     
-    REQUIRED_FILES=("docker_updater.py" "docker-updater.service" "docker-updater-sudoers" "requirements.txt")
+    REQUIRED_FILES=("docker_updater.py" "docker-updater.service" "docker-updater-sudoers" "requirements.txt" "docker-updater.logrotate")
     
     for file in "${REQUIRED_FILES[@]}"; do
         if [ ! -f "$SCRIPT_DIR/$file" ]; then
@@ -164,27 +165,51 @@ copy_files() {
     # Copy application files
     cp "$SCRIPT_DIR/docker_updater.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
+    # Copy core helper package
+    if [ -d "$SCRIPT_DIR/updater_core" ]; then
+        rm -rf "$INSTALL_DIR/updater_core"
+        cp -r "$SCRIPT_DIR/updater_core" "$INSTALL_DIR/"
+        echo "✅ Core helpers copied"
+    fi
     echo "✅ Application files copied"
     
-    # Copy configuration template if it exists
+    # Copy configuration template if not present (preserve existing)
     if [ -f "$SCRIPT_DIR/updater_config.json" ]; then
-        cp "$SCRIPT_DIR/updater_config.json" "$CONFIG_DIR/"
-        echo "✅ Configuration template copied"
+        if [ -f "$CONFIG_DIR/updater_config.json" ]; then
+            echo "ℹ️  Preserving existing config: $CONFIG_DIR/updater_config.json"
+            # Still provide an updated example next to it for reference
+            cp "$SCRIPT_DIR/updater_config.json" "$CONFIG_DIR/updater_config.json.example"
+            echo "✅ Updated example: $CONFIG_DIR/updater_config.json.example"
+        else
+            cp "$SCRIPT_DIR/updater_config.json" "$CONFIG_DIR/updater_config.json"
+            echo "✅ Configuration template installed"
+        fi
     else
         echo -e "${YELLOW}Warning: updater_config.json not found, you'll need to create it manually${NC}"
     fi
     
     # Handle environment file
     if [ -f "$SCRIPT_DIR/.env.example" ]; then
-        cp "$SCRIPT_DIR/.env.example" "$CONFIG_DIR/.env"
-        echo "✅ Environment template copied"
+        if [ -f "$CONFIG_DIR/.env" ]; then
+            echo "ℹ️  Preserving existing env: $CONFIG_DIR/.env"
+            cp "$SCRIPT_DIR/.env.example" "$CONFIG_DIR/.env.example"
+            echo "✅ Updated example: $CONFIG_DIR/.env.example"
+        else
+            cp "$SCRIPT_DIR/.env.example" "$CONFIG_DIR/.env"
+            echo "✅ Environment template installed"
+        fi
     else
-        echo -e "${YELLOW}Creating default environment file...${NC}"
-        cat > "$CONFIG_DIR/.env" << 'EOF'
+        if [ -f "$CONFIG_DIR/.env" ]; then
+            echo "ℹ️  Preserving existing env: $CONFIG_DIR/.env"
+        else
+            echo -e "${YELLOW}Creating default environment file...${NC}"
+            cat > "$CONFIG_DIR/.env" << 'EOF'
 # Docker Auto-Updater Environment Configuration
 
 # Logging Configuration
 LOG_LEVEL=INFO
+# plain or json
+LOG_FORMAT=plain
 
 # Update Check Interval (seconds)
 CHECK_INTERVAL=3600
@@ -201,8 +226,32 @@ CHECK_INTERVAL=3600
 # Docker Hub Configuration (if using private repos)
 #DOCKER_HUB_USERNAME=your_username
 #DOCKER_HUB_PASSWORD=your_password
+
+# Reliability tuning
+# Timeout waiting for healthy containers after restart (seconds)
+HEALTH_TIMEOUT=180
+# Seconds containers must remain healthy before confirming update
+HEALTH_STABLE=10
+# Timeout for compose and subprocess commands (seconds)
+COMPOSE_TIMEOUT=120
+
+# State retention
+# Number of timestamped state backups to keep
+STATE_BACKUPS=5
+# Optional separate directory for state backups
+#STATE_BACKUP_DIR=/var/backups/docker-auto-updater
+
+# Observability
+#METRICS_PORT=9100
+#WEBHOOK_URL=https://example.com/webhook
+
+# Controls
+# Comma-separated HH:MM-HH:MM windows (24h). Example: 02:00-04:00,14:00-15:30
+#MAINTENANCE_WINDOW=02:00-04:00
+#PAUSE_UPDATES=0
 EOF
-        echo "✅ Default environment file created"
+            echo "✅ Default environment file created"
+        fi
     fi
     
     echo -e "${GREEN}✅ Files copied successfully${NC}"
@@ -232,6 +281,15 @@ EOF
     fi
     
     echo -e "${GREEN}✅ Sudoers configuration installed${NC}"
+}
+
+# Install logrotate configuration
+install_logrotate() {
+    echo -e "${YELLOW}Installing logrotate configuration...${NC}"
+    local dest="/etc/logrotate.d/docker-auto-updater"
+    cp "$SCRIPT_DIR/docker-updater.logrotate" "$dest"
+    chmod 644 "$dest"
+    echo "✅ Logrotate configuration installed at $dest"
 }
 
 # Set file permissions
@@ -367,6 +425,7 @@ main() {
     create_directories
     copy_files
     install_sudoers
+    install_logrotate
     set_permissions
     install_python_deps
     install_service

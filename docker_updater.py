@@ -13,61 +13,68 @@ import logging
 import subprocess
 import tempfile
 import base64
-import hashlib
 import re
-from datetime import datetime
+import argparse
+import shutil
+import pwd
+import grp
+import fcntl
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any, Tuple
 import docker
-from docker.errors import DockerException
-import requests
+from docker.errors import DockerException, APIError
 import boto3
-from botocore.exceptions import ClientError, NoCredentialsError
-from google.cloud import storage as gcs
-from google.auth.exceptions import DefaultCredentialsError
 from google.auth import default
 from google.auth.transport.requests import Request
+from yaml import safe_load, safe_dump
+from updater_core.logging_utils import JSONFormatter
+from updater_core.compose_utils import (
+    get_compose_command as cu_get_compose_command,
+    run_compose as cu_run_compose,
+    update_compose_file as cu_update_compose_file,
+)
+from updater_core.semver_utils import (
+    parse_semver as su_parse_semver,
+    compare_semver as su_compare_semver,
+)
+from updater_core import docker_utils as du
+from updater_core import state_utils as su
+from updater_core import registry_utils as ru
+from updater_core import config_utils as cu
+from updater_core import metrics_utils as mu
+from updater_core import notify_utils as nu
 
-# Load environment variables from .env file
+# Optional config validation and metrics
 try:
-    from dotenv import load_dotenv
-    # Load from the config directory
+    from jsonschema import validate as jsonschema_validate, ValidationError  # type: ignore
+except Exception:  # pragma: no cover
+    jsonschema_validate = None
+    ValidationError = Exception
+try:
+    from prometheus_client import Counter, start_http_server  # type: ignore
+except Exception:  # pragma: no cover
+    Counter = None
+    start_http_server = None
+
+
+# JSONFormatter is provided by updater_core.logging_utils
+
+# Load environment variables from .env file (quietly, no prints)
+try:
+    from dotenv import load_dotenv  # type: ignore
     env_file = '/etc/docker-auto-updater/.env'
     if os.path.exists(env_file):
-        # Check if we can read the file
         try:
-            with open(env_file, 'r') as f:
-                content = f.read()
             load_dotenv(env_file)
-            print(f"Loaded environment variables from {env_file}")
-            # Debug: Show what AWS credentials we loaded
-            aws_key = os.getenv('AWS_ACCESS_KEY_ID', 'NOT_SET')
-            print(f"AWS_ACCESS_KEY_ID: {aws_key[:10]}..." if aws_key != 'NOT_SET' else "AWS_ACCESS_KEY_ID: NOT_SET")
-        except PermissionError:
-            print(f"Permission denied reading {env_file}")
-        except Exception as e:
-            print(f"Error loading {env_file}: {e}")
-    else:
-        print(f"Warning: {env_file} not found, using system environment variables")
-except ImportError:
-    print("python-dotenv not installed, using system environment variables only")
+        except Exception:
+            pass
+except Exception:
+    # python-dotenv not available or other non-fatal issue; continue with system env
+    pass
 
 
-@dataclass
-class ServiceConfig:
-    """Configuration for a monitored service."""
-    name: str
-    image: str
-    compose_file: str
-    compose_service: str
-    registry_type: str = "docker_hub"  # docker_hub, ecr, gcr
-    enabled: bool = True  # Enable/disable monitoring for this service
-    registry_config: Optional[Dict] = None
-    tag_pattern: Optional[str] = None  # e.g., "staging-*", "prod-*"
-    semver_pattern: Optional[str] = None  # e.g., "v*", "release-*"
-    current_digest: Optional[str] = None
-    current_tag: Optional[str] = None
-    last_updated: Optional[datetime] = None
+from updater_core.models import ServiceConfig
 
 
 class DockerUpdater:
@@ -85,31 +92,80 @@ class DockerUpdater:
         self.docker_client = None
         self.services: List[ServiceConfig] = []
         self.check_interval = 30  # seconds
+        # State backup/retention configuration
+        try:
+            self.state_backup_count = int(os.getenv('STATE_BACKUPS', '5'))
+        except Exception:
+            self.state_backup_count = 5
+        self.state_lock_file = (self.state_file or '') + '.lock'
+        # ECR auth cache { region: {username, password, endpoint, expires: datetime, last_login: datetime} }
+        self._ecr_auth_cache: Dict[str, Dict[str, Any]] = {}
+        # Health and compose tuning
+        try:
+            self.health_timeout = int(os.getenv('HEALTH_TIMEOUT', '180'))
+        except Exception:
+            self.health_timeout = 180
+        try:
+            self.health_stable_seconds = int(os.getenv('HEALTH_STABLE', '10'))
+        except Exception:
+            self.health_stable_seconds = 10
+        try:
+            self.compose_timeout_sec = int(os.getenv('COMPOSE_TIMEOUT', '120'))
+        except Exception:
+            self.compose_timeout_sec = 120
+        # Optional separate backup directory
+        self.state_backup_dir = os.getenv('STATE_BACKUP_DIR')
         self.setup_logging()
         self.load_config()
         self.init_docker_client()
+        self.init_metrics()
     
     def setup_logging(self):
         """Configure logging with proper formatting."""
         # Use environment variable for log level, default to INFO
         log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
-        
-        # Use proper log directory that's writable
-        log_dir = '/var/log/docker-auto-updater'
+
+        # Use proper log directory that's writable, allow override
+        log_dir = os.getenv('LOG_DIR', '/var/log/docker-auto-updater')
         log_file = os.path.join(log_dir, 'docker_updater.log')
-        
-        # Ensure log directory exists and is writable
-        os.makedirs(log_dir, exist_ok=True)
-        
+
+        # Ensure log directory exists and is writable; fallback if needed
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+        except Exception:
+            try:
+                fallback_dir = os.path.abspath('./logs')
+                os.makedirs(fallback_dir, exist_ok=True)
+                log_dir = fallback_dir
+                log_file = os.path.join(log_dir, 'docker_updater.log')
+            except Exception:
+                fallback_dir = '/tmp/docker-auto-updater'
+                os.makedirs(fallback_dir, exist_ok=True)
+                log_dir = fallback_dir
+                log_file = os.path.join(log_dir, 'docker_updater.log')
+
         logging.basicConfig(
             level=getattr(logging, log_level, logging.INFO),
-            format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.FileHandler(log_file),
                 logging.StreamHandler(sys.stdout)
             ]
         )
+        # Formatter selection
+        fmt = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        if os.getenv('LOG_FORMAT', 'plain').lower() == 'json':
+            fmt = JSONFormatter()
+        for h in logging.getLogger().handlers:
+            h.setFormatter(fmt)
         self.logger = logging.getLogger(__name__)
+
+    def init_metrics(self):
+        m = mu.init_metrics(self.logger)
+        self.metrics_enabled = m['enabled']
+        self.counter_updates = m['updates']
+        self.counter_rollbacks = m['rollbacks']
+        self.counter_failures = m['failures']
+        self.counter_state_restored = m['state_restored']
     
     def init_docker_client(self):
         """Initialize Docker client with error handling."""
@@ -122,246 +178,70 @@ class DockerUpdater:
             sys.exit(1)
     
     def resolve_env_vars(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
-        """Recursively resolve environment variables in configuration values."""
-        resolved = {}
-        for key, value in config_dict.items():
-            if isinstance(value, str):
-                # Replace ${VAR_NAME} with environment variable value
-                import re
-                def replace_env_var(match):
-                    var_name = match.group(1)
-                    return os.getenv(var_name, match.group(0))  # Return original if not found
-                
-                resolved[key] = re.sub(r'\$\{([^}]+)\}', replace_env_var, value)
-            elif isinstance(value, dict):
-                resolved[key] = self.resolve_env_vars(value)
-            elif isinstance(value, list):
-                resolved[key] = [self.resolve_env_vars(item) if isinstance(item, dict) else item for item in value]
-            else:
-                resolved[key] = value
-        return resolved
+        return cu.resolve_env_vars(config_dict)
 
     def load_config(self):
         """Load configuration from JSON file."""
         if not os.path.exists(self.config_file):
-            self.create_default_config()
-        
+            self.config_file = cu.create_default_config(self.config_file, self.logger)
         try:
-            with open(self.config_file, 'r') as f:
-                config = json.load(f)
-            
-            self.check_interval = config.get('check_interval', 30)
-            
-            for service_config in config.get('services', []):
-                # Resolve environment variables in registry_config
-                registry_config = service_config.get('registry_config', {})
-                resolved_registry_config = self.resolve_env_vars(registry_config)
-                
-                service = ServiceConfig(
-                    name=service_config['name'],
-                    image=service_config['image'],
-                    compose_file=service_config['compose_file'],
-                    compose_service=service_config['compose_service'],
-                    registry_type=service_config.get('registry_type', 'docker_hub'),
-                    registry_config=resolved_registry_config,
-                    tag_pattern=service_config.get('tag_pattern'),
-                    semver_pattern=service_config.get('semver_pattern')
-                )
-                self.services.append(service)
-            
-            self.logger.info(f"Loaded configuration for {len(self.services)} services")
-            
-        except (json.JSONDecodeError, KeyError) as e:
+            services, check_interval = cu.load_config(self.config_file, self.logger)
+            self.services.extend(services)
+            self.check_interval = check_interval
+        except Exception as e:
             self.logger.error(f"Invalid configuration file: {e}")
             sys.exit(1)
     
     def create_default_config(self):
-        """Create a default configuration file."""
-        default_config = {
-            "check_interval": 30,
-            "services": [
-                {
-                    "name": "example-web-app",
-                    "image": "nginx:latest",
-                    "compose_file": "./docker-compose.yml",
-                    "compose_service": "web"
-                }
-            ]
-        }
-        
-        with open(self.config_file, 'w') as f:
-            json.dump(default_config, f, indent=2)
-        
-        self.logger.info(f"Created default configuration file: {self.config_file}")
-        self.logger.info("Please update the configuration with your services")
+        self.config_file = cu.create_default_config(self.config_file, self.logger)
+
+    def get_compose_command(self) -> List[str]:
+        """Determine docker compose command (plugin or standalone)."""
+        return cu_get_compose_command(shutil)
     
     def authenticate_ecr(self, region: str, aws_access_key_id: str = None, aws_secret_access_key: str = None) -> bool:
-        """Authenticate with AWS ECR."""
-        try:
-            # Debug: Log what credentials we're using
-            if aws_access_key_id and aws_secret_access_key:
-                self.logger.info(f"Using provided ECR credentials for region {region}: {aws_access_key_id[:10]}...")
-                ecr_client = boto3.client(
-                    'ecr',
-                    region_name=region,
-                    aws_access_key_id=aws_access_key_id,
-                    aws_secret_access_key=aws_secret_access_key
-                )
-            else:
-                self.logger.info(f"Using default AWS credentials for ECR in region {region}")
-                ecr_client = boto3.client('ecr', region_name=region)
-            
-            # Get authorization token
-            response = ecr_client.get_authorization_token()
-            token = response['authorizationData'][0]['authorizationToken']
-            endpoint = response['authorizationData'][0]['proxyEndpoint']
-            
-            # Decode the token
-            username, password = base64.b64decode(token).decode().split(':')
-            
-            # Login to Docker registry
-            login_result = subprocess.run([
-                'docker', 'login', '--username', username, '--password-stdin', endpoint
-            ], input=password, text=True, capture_output=True)
-            
-            if login_result.returncode == 0:
-                self.logger.info(f"Successfully authenticated with ECR in region {region}")
-                return True
-            else:
-                self.logger.error(f"ECR authentication failed: {login_result.stderr}")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"ECR authentication error: {e}")
-            return False
+        return ru.authenticate_ecr(
+            region,
+            self.logger,
+            self.compose_timeout_sec,
+            self._ecr_auth_cache,
+            self._retry,
+            aws_access_key_id,
+            aws_secret_access_key,
+        )
     
     def authenticate_gcr(self, project_id: str = None, service_account_path: str = None) -> bool:
-        """Authenticate with Google Container Registry."""
-        try:
-            # Set up authentication
-            if service_account_path:
-                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = service_account_path
-            
-            # Get default credentials
-            credentials, project = default()
-            if project_id:
-                project = project_id
-            
-            # Refresh credentials
-            auth_req = Request()
-            credentials.refresh(auth_req)
-            
-            # Get access token
-            access_token = credentials.token
-            
-            # Login to Docker registry for GCR
-            registries = [
-                'gcr.io',
-                'us.gcr.io',
-                'eu.gcr.io',
-                'asia.gcr.io'
-            ]
-            
-            for registry in registries:
-                login_result = subprocess.run([
-                    'docker', 'login', '-u', '_token', '--password-stdin', registry
-                ], input=access_token, text=True, capture_output=True)
-                
-                if login_result.returncode != 0:
-                    self.logger.warning(f"Failed to login to {registry}: {login_result.stderr}")
-            
-            self.logger.info("Successfully authenticated with Google Container Registry")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"GCR authentication error: {e}")
-            return False
+        return ru.authenticate_gcr(project_id, service_account_path, self.logger)
     
     def authenticate_registry(self, service: ServiceConfig) -> bool:
         """Authenticate with the appropriate registry for a service."""
-        if service.registry_type == "ecr":
-            region = service.registry_config.get('region', 'us-east-1')
-            aws_access_key_id = service.registry_config.get('aws_access_key_id')
-            aws_secret_access_key = service.registry_config.get('aws_secret_access_key')
-            return self.authenticate_ecr(region, aws_access_key_id, aws_secret_access_key)
-        
-        elif service.registry_type == "gcr":
-            project_id = service.registry_config.get('project_id')
-            service_account_path = service.registry_config.get('service_account_path')
-            return self.authenticate_gcr(project_id, service_account_path)
-        
-        elif service.registry_type == "docker_hub":
-            # Docker Hub authentication (if credentials provided)
-            username = service.registry_config.get('username')
-            password = service.registry_config.get('password')
-            if username and password:
-                login_result = subprocess.run([
-                    'docker', 'login', '--username', username, '--password-stdin'
-                ], input=password, text=True, capture_output=True)
-                
-                if login_result.returncode == 0:
-                    self.logger.info("Successfully authenticated with Docker Hub")
-                    return True
-                else:
-                    self.logger.error(f"Docker Hub authentication failed: {login_result.stderr}")
-                    return False
-            return True  # No authentication needed for public images
-        
-        return True
+        return ru.authenticate_registry(
+            service,
+            self.logger,
+            self.compose_timeout_sec,
+            self._ecr_auth_cache,
+            self._retry,
+        )
     
-    def parse_semver(self, version: str) -> Tuple[int, int, int, str]:
-        """Parse a semantic version string into components."""
-        # Remove common prefixes
-        version = version.lstrip('v').lstrip('release-').lstrip('version-')
-        
-        # Match semver pattern: major.minor.patch[-prerelease][+build]
-        semver_pattern = r'^(\d+)\.(\d+)\.(\d+)(?:-([a-zA-Z0-9\-\.]+))?(?:\+([a-zA-Z0-9\-\.]+))?$'
-        match = re.match(semver_pattern, version)
-        
-        if match:
-            major, minor, patch, prerelease = match.groups()[:4]
-            return (int(major), int(minor), int(patch), prerelease or "")
-        
-        # Fallback for non-standard versions
-        parts = version.split('.')
-        try:
-            major = int(parts[0]) if len(parts) > 0 else 0
-            minor = int(parts[1]) if len(parts) > 1 else 0
-            patch = int(parts[2]) if len(parts) > 2 else 0
-            return (major, minor, patch, "")
-        except ValueError:
-            return (0, 0, 0, version)
-    
+    def parse_semver(self, version: str) -> Tuple[int, int, int, Optional[List[Any]]]:
+        return su_parse_semver(version)
+
     def compare_semver(self, version1: str, version2: str) -> int:
-        """Compare two semantic versions. Returns 1 if v1 > v2, -1 if v1 < v2, 0 if equal."""
-        v1_parts = self.parse_semver(version1)
-        v2_parts = self.parse_semver(version2)
-        
-        # Compare major, minor, patch
-        for i in range(3):
-            if v1_parts[i] > v2_parts[i]:
-                return 1
-            elif v1_parts[i] < v2_parts[i]:
-                return -1
-        
-        # Compare prerelease (empty string means stable release)
-        v1_pre, v2_pre = v1_parts[3], v2_parts[3]
-        
-        if not v1_pre and not v2_pre:
-            return 0  # Both stable
-        elif not v1_pre and v2_pre:
-            return 1  # v1 is stable, v2 is prerelease
-        elif v1_pre and not v2_pre:
-            return -1  # v1 is prerelease, v2 is stable
-        else:
-            # Both are prerelease, compare lexicographically
-            if v1_pre > v2_pre:
-                return 1
-            elif v1_pre < v2_pre:
-                return -1
-            else:
-                return 0
+        return su_compare_semver(version1, version2)
     
+    def _retry(self, func, *args, **kwargs):
+        max_attempts = kwargs.pop('max_attempts', 3)
+        base = kwargs.pop('base', 1.0)
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                if attempt == max_attempts:
+                    raise
+                sleep = base * (2 ** (attempt - 1)) + (0.1 * attempt)
+                self.logger.warning(f"Transient error: {e}. Retrying in {sleep:.1f}s (attempt {attempt}/{max_attempts})")
+                time.sleep(sleep)
+
     def get_latest_semver_tag(self, service: ServiceConfig) -> Optional[str]:
         """Get the latest semantic version tag for a service."""
         if not service.semver_pattern:
@@ -394,46 +274,48 @@ class DockerUpdater:
             else:
                 ecr_client = boto3.client('ecr', region_name=region)
             
-            # List images in repository
-            response = ecr_client.describe_images(
-                repositoryName=repository_name,
-                maxResults=100
-            )
-            
-            # Filter tags matching semver pattern
+            # List images in repository with pagination
             semver_tags = []
-            pattern_prefix = service.semver_pattern.replace('*', '')
-            
-            for image_detail in response['imageDetails']:
-                if 'imageTags' in image_detail:
-                    for tag in image_detail['imageTags']:
-                        if tag.startswith(pattern_prefix):
-                            # Extract version part
-                            version = tag[len(pattern_prefix):] if pattern_prefix else tag
-                            
-                            # Validate it's a semver
-                            try:
-                                self.parse_semver(version)
-                                semver_tags.append({
-                                    'tag': tag,
-                                    'version': version,
-                                    'pushed_at': image_detail['imagePushedAt']
-                                })
-                            except:
-                                continue
+            pattern_prefix = ''
+            if service.semver_pattern:
+                if service.semver_pattern.endswith('*'):
+                    pattern_prefix = service.semver_pattern[:-1]
+                else:
+                    pattern_prefix = service.semver_pattern
+            next_token = None
+            while True:
+                kwargs = {
+                    'repositoryName': repository_name,
+                    'maxResults': 100
+                }
+                if next_token:
+                    kwargs['nextToken'] = next_token
+                response = self._retry(ecr_client.describe_images, **kwargs)
+                for image_detail in response.get('imageDetails', []):
+                    if 'imageTags' in image_detail:
+                        for tag in image_detail['imageTags']:
+                            if not pattern_prefix or tag.startswith(pattern_prefix):
+                                version = tag[len(pattern_prefix):] if pattern_prefix else tag
+                                try:
+                                    self.parse_semver(version)
+                                    semver_tags.append({
+                                        'tag': tag,
+                                        'version': version,
+                                        'pushed_at': image_detail.get('imagePushedAt')
+                                    })
+                                except Exception:
+                                    continue
+                next_token = response.get('nextToken')
+                if not next_token:
+                    break
             
             if not semver_tags:
                 return None
             
-            # Sort by semantic version (newest first)
-            semver_tags.sort(key=lambda x: (
-                self.parse_semver(x['version'])[0],  # major
-                self.parse_semver(x['version'])[1],  # minor
-                self.parse_semver(x['version'])[2],  # patch
-                x['version'] if not self.parse_semver(x['version'])[3] else f"~{self.parse_semver(x['version'])[3]}"  # prerelease
-            ), reverse=True)
-            
-            latest_tag = semver_tags[0]['tag']
+            # Select max by SemVer precedence
+            from functools import cmp_to_key
+            semver_tags.sort(key=cmp_to_key(lambda a, b: self.compare_semver(a['version'], b['version'])))
+            latest_tag = semver_tags[-1]['tag']
             self.logger.info(f"Found latest semver tag for pattern '{service.semver_pattern}': {latest_tag}")
             return latest_tag
             
@@ -442,8 +324,8 @@ class DockerUpdater:
             return None
     
     def get_latest_tag_for_pattern(self, service: ServiceConfig) -> Optional[str]:
-        """Get the latest tag matching the pattern for ECR repositories."""
-        if service.registry_type != "ecr" or not service.tag_pattern:
+        """Get the latest tag matching a pattern/regex for ECR repositories."""
+        if service.registry_type != "ecr" or not (service.tag_pattern or service.tag_regex):
             return None
         
         try:
@@ -473,24 +355,51 @@ class DockerUpdater:
             else:
                 ecr_client = boto3.client('ecr', region_name=region)
             
-            # List images in repository
-            response = ecr_client.describe_images(
-                repositoryName=repository_name,
-                maxResults=100
-            )
-            
-            # Filter tags matching pattern and sort by push date
+            # List images in repository with pagination
             matching_images = []
-            pattern_prefix = service.tag_pattern.replace('*', '')
-            
-            for image_detail in response['imageDetails']:
-                if 'imageTags' in image_detail:
-                    for tag in image_detail['imageTags']:
-                        if tag.startswith(pattern_prefix):
-                            matching_images.append({
-                                'tag': tag,
-                                'pushed_at': image_detail['imagePushedAt']
-                            })
+            pattern_prefix = ''
+            use_glob = False
+            regex = None
+            if service.tag_regex:
+                try:
+                    regex = re.compile(service.tag_regex)
+                except re.error as e:
+                    self.logger.error(f"Invalid tag_regex for {service.name}: {e}")
+                    return None
+            elif service.tag_pattern:
+                # Determine if glob is needed
+                if any(ch in service.tag_pattern for ch in ['*', '?', '[']):
+                    use_glob = True
+                else:
+                    pattern_prefix = service.tag_pattern
+            next_token = None
+            while True:
+                kwargs = {
+                    'repositoryName': repository_name,
+                    'maxResults': 100
+                }
+                if next_token:
+                    kwargs['nextToken'] = next_token
+                response = self._retry(ecr_client.describe_images, **kwargs)
+                for image_detail in response.get('imageDetails', []):
+                    if 'imageTags' in image_detail:
+                        for tag in image_detail['imageTags']:
+                            matched = False
+                            if regex is not None:
+                                matched = bool(regex.match(tag))
+                            elif use_glob:
+                                import fnmatch
+                                matched = fnmatch.fnmatch(tag, service.tag_pattern)
+                            else:
+                                matched = tag.startswith(pattern_prefix)
+                            if matched:
+                                matching_images.append({
+                                    'tag': tag,
+                                    'pushed_at': image_detail.get('imagePushedAt')
+                                })
+                next_token = response.get('nextToken')
+                if not next_token:
+                    break
             
             if not matching_images:
                 return None
@@ -508,70 +417,35 @@ class DockerUpdater:
     
     def get_image_digest(self, image_name: str) -> Optional[str]:
         """Get the digest of a Docker image from the registry."""
-        try:
-            # Pull the latest image to get current digest
-            self.logger.debug(f"Checking digest for image: {image_name}")
-            
-            # Use docker inspect to get the current digest
-            result = subprocess.run(
-                ['docker', 'inspect', '--format={{.RepoDigests}}', image_name],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            
-            # Parse the digest from the output
-            digests = result.stdout.strip()
-            if digests and digests != '[]':
-                # Extract digest from format like [registry/image@sha256:...]
-                digest_start = digests.find('sha256:')
-                if digest_start != -1:
-                    digest_end = digests.find(']', digest_start)
-                    if digest_end == -1:
-                        digest_end = len(digests)
-                    return digests[digest_start:digest_end]
-            
-            return None
-            
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Failed to get digest for {image_name}: {e}")
-            return None
+        return du.get_image_digest(image_name, self.compose_timeout_sec, self.logger)
     
     def pull_image(self, image_name: str) -> bool:
         """Pull the latest version of an image."""
-        try:
-            self.logger.info(f"Pulling image: {image_name}")
-            self.docker_client.images.pull(image_name)
-            return True
-        except APIError as e:
-            self.logger.error(f"Failed to pull image {image_name}: {e}")
-            return False
+        return du.pull_image(self.docker_client, image_name, self.logger, attempts=3)
     
+    def _run_compose(self, args: List[str], cwd: str, timeout: Optional[int] = None) -> None:
+        """Run compose command with fallback to sudo (non-interactive)."""
+        cu_run_compose(args, cwd, self.logger, timeout or self.compose_timeout_sec)
+
     def restart_service(self, service: ServiceConfig) -> bool:
         """Restart a service using docker-compose."""
         try:
-            compose_dir = os.path.dirname(os.path.abspath(service.compose_file))
-            compose_file = os.path.basename(service.compose_file)
+            compose_path = os.path.abspath(service.compose_file)
+            # Use a safe working directory to avoid directory execute permission issues
+            safe_cwd = '/'
+            cmd = self.get_compose_command()
+
+            # Determine compose file owner for context/logging
+            try:
+                st = os.stat(compose_path)
+                owner = pwd.getpwuid(st.st_uid).pw_name
+                group = grp.getgrgid(st.st_gid).gr_name
+                self.logger.info(f"Restarting service: {service.name} as current user; compose owned by {owner}:{group}")
+            except Exception:
+                self.logger.info(f"Restarting service: {service.name}")
             
-            self.logger.info(f"Restarting service: {service.name}")
-            
-            # Stop the service
-            stop_result = subprocess.run(
-                ['docker-compose', '-f', compose_file, 'stop', service.compose_service],
-                cwd=compose_dir,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            
-            # Start the service
-            start_result = subprocess.run(
-                ['docker-compose', '-f', compose_file, 'up', '-d', service.compose_service],
-                cwd=compose_dir,
-                capture_output=True,
-                text=True,
-                check=True
-            )
+            # Single up command: pull + recreate as needed
+            self._run_compose([*cmd, '-f', compose_path, 'up', '-d', '--pull', 'always', service.compose_service], safe_cwd)
             
             self.logger.info(f"Successfully restarted service: {service.name}")
             return True
@@ -639,27 +513,29 @@ class DockerUpdater:
             self.logger.warning(f"Could not get digest for {current_image}")
             return False
         
-        # For tag patterns, check if we have a new tag or new digest
-        if service.tag_pattern:
+        # For tag patterns or semver patterns, check if we have a new tag
+        if service.tag_pattern or service.semver_pattern:
             latest_tag = current_image.split(':')[1]
             
-            # If we have a new tag, update regardless of digest
+            # If we have a new tag, update with rollback safeguards
             if service.current_tag != latest_tag:
                 self.logger.info(f"New tag detected for {service.name}: {latest_tag}")
-                
-                # Update docker-compose file with new image
-                if self.update_compose_file(service, current_image):
-                    if self.restart_service(service):
-                        service.current_digest = new_digest
-                        service.current_tag = latest_tag
-                        service.last_updated = datetime.now()
-                        self.save_state()
-                        return True
-                    else:
-                        self.logger.error(f"Failed to restart service: {service.name}")
-                        return False
+                base_image = service.image.split(':')[0]
+                old_tag = service.current_tag or (service.image.split(':')[1] if ':' in service.image else 'latest')
+                old_image = f"{base_image}:{old_tag}"
+                if self.perform_update_with_rollback(service, old_image, current_image, new_digest):
+                    old_digest_short = (service.current_digest[:12] + '...') if service.current_digest else 'none'
+                    new_digest_short = (new_digest[:12] + '...') if new_digest else 'unknown'
+                    self.logger.info(
+                        f"Updated {service.name} ({service.compose_service}) @ {service.compose_file}: "
+                        f"{old_image} -> {current_image} | digest {old_digest_short} -> {new_digest_short}"
+                    )
+                    service.current_digest = new_digest
+                    service.current_tag = latest_tag
+                    service.last_updated = datetime.now()
+                    self.save_state()
+                    return True
                 else:
-                    self.logger.error(f"Failed to update compose file for: {service.name}")
                     return False
             else:
                 self.logger.debug(f"No new tag for {service.name}, current: {latest_tag}")
@@ -679,6 +555,14 @@ class DockerUpdater:
                 
                 # Update the service
                 if self.restart_service(service):
+                    base_image = service.image.split(':')[0]
+                    current_tag = service.current_tag or (service.image.split(':')[1] if ':' in service.image else 'latest')
+                    old_digest_short = (service.current_digest[:12] + '...') if service.current_digest else 'none'
+                    new_digest_short = (new_digest[:12] + '...') if new_digest else 'unknown'
+                    self.logger.info(
+                        f"Updated {service.name} ({service.compose_service}) @ {service.compose_file}: "
+                        f"image {base_image}:{current_tag} unchanged | digest {old_digest_short} -> {new_digest_short}"
+                    )
                     service.current_digest = new_digest
                     service.last_updated = datetime.now()
                     self.save_state()
@@ -690,110 +574,184 @@ class DockerUpdater:
         return False
     
     def update_compose_file(self, service: ServiceConfig, new_image: str) -> bool:
-        """Update the docker-compose file with new image tag using sed for in-place editing."""
+        """Delegate compose file image update to helper utility."""
+        return cu_update_compose_file(service, new_image, self.logger, getattr(self, 'compose_timeout_sec', None))
+
+    def _find_service_containers(self, service: ServiceConfig) -> List[Any]:
+        return du.find_service_containers(self.docker_client, service, self.logger)
+
+    def wait_for_health(self, service: ServiceConfig, timeout: Optional[int] = None, stable_seconds: Optional[int] = None) -> bool:
+        return du.wait_for_health(
+            self.docker_client,
+            service,
+            self.logger,
+            timeout or self.health_timeout,
+            stable_seconds or self.health_stable_seconds,
+        )
+
+    def _notify_event(self, event_type: str, payload: Dict[str, Any]):
+        nu.notify_event(event_type, payload, self.logger)
+
+    def perform_update_with_rollback(self, service: ServiceConfig, old_image: str, new_image: str, new_digest: str) -> bool:
+        # Acquire a per-compose lock, falling back to a writable locks dir if needed
+        lock_fd = None
+        lock_path = service.compose_file + '.lock'
         try:
-            # Extract the base image name without tag
-            base_image = new_image.split(':')[0] if ':' in new_image else new_image
-            new_tag = new_image.split(':')[1] if ':' in new_image else 'latest'
-            
-            # Use a simpler sed pattern that's more reliable
-            # Pattern: find the base image and replace everything after the colon until whitespace
-            sed_pattern = f's|{base_image}:[^ \t]*|{new_image}|g'
-            
-            # Try direct sed first
+            lock_fd = open(lock_path, 'w')
+        except PermissionError:
+            # Fallback to a central locks directory
+            alt_dirs = ['/var/run/docker-auto-updater/locks', '/tmp/docker-auto-updater/locks']
+            safe_name = service.compose_file.replace('/', '_').replace(':', '_') + '.lock'
+            for d in alt_dirs:
+                try:
+                    os.makedirs(d, exist_ok=True)
+                    lock_path = os.path.join(d, safe_name)
+                    lock_fd = open(lock_path, 'w')
+                    self.logger.info(f"Using fallback lock path for {service.name}: {lock_path}")
+                    break
+                except Exception:
+                    lock_fd = None
+                    continue
+        except Exception:
+            lock_fd = None
+
+        try:
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+                except Exception:
+                    pass
+
+            # Update to new image
+            if not self.update_compose_file(service, new_image):
+                return False
+            if not self.restart_service(service):
+                return False
+            # Health gate
+            if not self.wait_for_health(service):
+                self.logger.error(f"Health check failed after update for {service.name}, rolling back")
+                if getattr(self, 'counter_failures', None):
+                    self.counter_failures.inc()
+                # Attempt rollback only if previous image is actually available
+                can_rollback = False
+                try:
+                    prev_digest = self.get_image_digest(old_image)
+                    can_rollback = bool(prev_digest)
+                except Exception:
+                    can_rollback = False
+                if can_rollback and self.update_compose_file(service, old_image) and self.restart_service(service):
+                    if getattr(self, 'counter_rollbacks', None):
+                        self.counter_rollbacks.inc()
+                    self._notify_event('rollback', {
+                        'service': service.name,
+                        'compose_service': service.compose_service,
+                        'compose_file': service.compose_file,
+                        'old_image': old_image,
+                        'failed_image': new_image,
+                    })
+                    return False
+                else:
+                    self.logger.error(f"Rollback not possible for {service.name} (previous image unavailable or restart failed)")
+                    return False
+            # Post-update verification: running digest should match
+            containers = self._find_service_containers(service)
+            mismatch = False
+            for c in containers:
+                try:
+                    c.reload()
+                    digest_suffix = new_digest.split(':')[-1] if new_digest else None
+                    matched = False
+                    try:
+                        repo_digests = getattr(c.image, 'attrs', {}).get('RepoDigests') or []
+                        for rd in repo_digests:
+                            # rd like 'repo@sha256:...'
+                            if 'sha256:' in rd and digest_suffix and rd.split('@')[-1].endswith(digest_suffix):
+                                matched = True
+                                break
+                    except Exception:
+                        pass
+                    if not matched and digest_suffix:
+                        # last-resort: compare image id suffix
+                        try:
+                            img_id = c.image.id  # e.g., 'sha256:...'
+                            if img_id and img_id.endswith(digest_suffix):
+                                matched = True
+                        except Exception:
+                            pass
+                    if digest_suffix and not matched:
+                        mismatch = True
+                        break
+                except Exception:
+                    pass
+            if mismatch:
+                # Only warn; RepoDigests vs ImageID can legitimately differ from manifest digest
+                self.logger.warning(f"Digest mismatch detected after update for {service.name}; proceeding since health passed")
+            # success
+            if getattr(self, 'counter_updates', None):
+                self.counter_updates.inc()
+            self._notify_event('update', {
+                'service': service.name,
+                'compose_service': service.compose_service,
+                'compose_file': service.compose_file,
+                'old_image': old_image,
+                'new_image': new_image,
+            })
+            return True
+        finally:
             try:
-                result = subprocess.run([
-                    'sed', '-i', sed_pattern, service.compose_file
-                ], check=True, capture_output=True, text=True)
-                
-                self.logger.info(f"Updated {service.compose_file} with new image: {new_image}")
-                return True
-                
-            except subprocess.CalledProcessError:
-                # If permission denied, try with sudo
-                self.logger.info(f"Permission denied, trying with sudo for {service.compose_file}")
-                
-                result = subprocess.run([
-                    'sudo', 'sed', '-i', sed_pattern, service.compose_file
-                ], check=True, capture_output=True, text=True)
-                
-                self.logger.info(f"Updated {service.compose_file} via sudo with new image: {new_image}")
-                return True
-                
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Failed to update compose file {service.compose_file} with sed: {e}")
-            return False
-        except Exception as e:
-            self.logger.error(f"Failed to update compose file {service.compose_file}: {e}")
-            return False
+                if lock_fd is not None:
+                    lock_fd.close()
+            except Exception:
+                pass
+    # Second definition kept historically; delegate to helper for clarity
+    def update_compose_file(self, service: ServiceConfig, new_image: str) -> bool:  # type: ignore[no-redef]
+        return cu_update_compose_file(service, new_image, self.logger, getattr(self, 'compose_timeout_sec', None))
 
     def save_state(self):
-        """Save current state to a file for persistence."""
-        state = {
-            'services': []
-        }
-        
-        for service in self.services:
-            service_state = {
-                'name': service.name,
-                'image': service.image,
-                'current_digest': service.current_digest,
-                'last_updated': service.last_updated.isoformat() if service.last_updated else None
-            }
-            state['services'].append(service_state)
-        
-        with open(self.state_file, 'w') as f:
-            json.dump(state, f, indent=2)
+        result = su.save_state(
+            self.services,
+            self.state_file,
+            self.state_lock_file,
+            self.state_backup_dir,
+            self.state_backup_count,
+            self.logger,
+        )
+        if result is not None:
+            self.state_file, self.state_lock_file = result
+
+    def _prune_state_backups(self, state_dir: str):
+        # kept for backwards compatibility; state pruning is handled within save_state
+        pass
     
     def load_state(self):
-        """Load previous state from file."""
-        if not os.path.exists(self.state_file):
-            return
-        
-        try:
-            with open(self.state_file, 'r') as f:
-                state = json.load(f)
-            
-            for service_data in state.get('services', []):
-                for service in self.services:
-                    if service.name == service_data['name']:
-                        service.current_digest = service_data.get('current_digest')
-                        if service_data.get('last_updated'):
-                            service.last_updated = datetime.fromisoformat(service_data['last_updated'])
-                        break
-        except Exception as e:
-            self.logger.error(f"Error loading state: {e}")
+        su.load_state(
+            self.services,
+            self.state_file,
+            self.state_backup_dir,
+            self.logger,
+            getattr(self, 'counter_state_restored', None),
+        )
     
     def cleanup_old_state(self):
-        """Clean up old state files and temporary files."""
-        try:
-            # Remove old state files older than 30 days
-            state_file = self.state_file
-            if os.path.exists(state_file):
-                file_age = time.time() - os.path.getmtime(state_file)
-                if file_age > 30 * 24 * 3600:  # 30 days
-                    os.remove(state_file)
-                    self.logger.info("Removed old state file")
-            
-            # Clean up temporary docker-compose files
-            temp_dir = '/tmp'
-            for filename in os.listdir(temp_dir):
-                if filename.startswith('docker-compose-') and filename.endswith('.yml'):
-                    filepath = os.path.join(temp_dir, filename)
-                    try:
-                        file_age = time.time() - os.path.getmtime(filepath)
-                        if file_age > 3600:  # 1 hour
-                            os.remove(filepath)
-                            self.logger.debug(f"Removed old temp file: {filename}")
-                    except OSError:
-                        pass
-                        
-        except Exception as e:
-            self.logger.warning(f"Error during cleanup: {e}")
+        su.cleanup_old_state(self.state_file, self.logger)
     
     def run(self):
         """Main execution loop."""
         self.logger.info("Docker Auto-Updater starting...")
+        # Global single-instance lock
+        app_lock_paths = ['/var/run/docker-auto-updater/app.lock', '/tmp/docker-auto-updater-app.lock']
+        self._app_lock_fd = None
+        for path in app_lock_paths:
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                self._app_lock_fd = open(path, 'w')
+                fcntl.flock(self._app_lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except Exception:
+                self._app_lock_fd = None
+        if not self._app_lock_fd:
+            self.logger.error("Another instance appears to be running; exiting")
+            sys.exit(1)
         
         enabled_services = [s for s in self.services if s.enabled]
         disabled_services = [s for s in self.services if not s.enabled]
@@ -809,6 +767,16 @@ class DockerUpdater:
         
         try:
             while True:
+                # Respect pause and maintenance window
+                if os.getenv('PAUSE_UPDATES', '0') in ('1', 'true', 'TRUE', 'yes', 'YES'):
+                    self.logger.info("Updates paused via PAUSE_UPDATES; sleeping")
+                    time.sleep(self.check_interval)
+                    continue
+                window = os.getenv('MAINTENANCE_WINDOW')  # e.g., "02:00-04:00,14:00-15:00"
+                if window and not self._in_maintenance_window(window):
+                    self.logger.debug("Outside maintenance window; skipping this cycle")
+                    time.sleep(self.check_interval)
+                    continue
                 self.logger.info("Checking for updates...")
                 
                 for service in self.services:
@@ -826,6 +794,8 @@ class DockerUpdater:
                         self.logger.error(f"Error checking service {service.name}: {e}")
                 
                 self.logger.info(f"Check complete. Sleeping for {self.check_interval} seconds...")
+                # Periodic cleanup
+                self.cleanup_old_state()
                 time.sleep(self.check_interval)
                 
         except KeyboardInterrupt:
@@ -834,10 +804,72 @@ class DockerUpdater:
             self.logger.error(f"Unexpected error: {e}")
             raise
 
+    def _in_maintenance_window(self, window_spec: str) -> bool:
+        """Return True if current local time falls within any given window.
+
+        window_spec: comma-separated list of HH:MM-HH:MM (24h) ranges.
+        Crossing midnight supported (e.g., 23:00-01:00).
+        """
+        try:
+            now = datetime.now().time()
+            for token in [w.strip() for w in window_spec.split(',') if w.strip()]:
+                try:
+                    start_s, end_s = token.split('-')
+                    sh, sm = map(int, start_s.split(':'))
+                    eh, em = map(int, end_s.split(':'))
+                    start = datetime.now().replace(hour=sh, minute=sm, second=0, microsecond=0).time()
+                    end = datetime.now().replace(hour=eh, minute=em, second=0, microsecond=0).time()
+                    if start <= end:
+                        if start <= now <= end:
+                            return True
+                    else:
+                        # window crosses midnight
+                        if now >= start or now <= end:
+                            return True
+                except Exception:
+                    continue
+        except Exception:
+            return True
+        return False
+
 
 def main():
     """Main entry point."""
-    updater = DockerUpdater()
+    parser = argparse.ArgumentParser(description='Docker Auto-Updater')
+    parser.add_argument('--config', dest='config', help='Path to updater_config.json')
+    parser.add_argument('--once', action='store_true', help='Run a single update check and exit')
+    parser.add_argument('--test', action='store_true', help='Test environment (Docker connectivity and registry auth) and exit')
+    args = parser.parse_args()
+
+    updater = DockerUpdater(config_file=args.config)
+
+    if args.test:
+        # Basic test: Docker ping and registry auth attempts
+        ok = True
+        try:
+            updater.docker_client.ping()
+            print('Docker connectivity: OK')
+        except Exception as e:
+            print(f'Docker connectivity: FAIL - {e}')
+            ok = False
+        for svc in updater.services:
+            try:
+                auth_ok = updater.authenticate_registry(svc)
+                print(f'Registry auth for {svc.name}: {"OK" if auth_ok else "FAIL"}')
+                ok = ok and auth_ok
+            except Exception as e:
+                print(f'Registry auth for {svc.name}: FAIL - {e}')
+                ok = False
+        sys.exit(0 if ok else 1)
+
+    if args.once:
+        for svc in updater.services:
+            try:
+                updater.check_for_updates(svc)
+            except Exception as e:
+                updater.logger.error(f"Error during single-run update for {svc.name}: {e}")
+        sys.exit(0)
+
     updater.run()
 
 

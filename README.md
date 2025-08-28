@@ -1,68 +1,75 @@
-# Docker Auto-Updater
+# Docker Auto‑Updater
 
-A production-ready Docker container auto-updater that runs on the host system and monitors multiple registries (Docker Hub, AWS ECR, Google Container Registry) for image updates. Automatically restarts services using docker-compose with support for dynamic tag patterns, semantic versioning, and comprehensive logging.
+Production‑ready service that monitors container registries (Docker Hub, AWS ECR, Google Container Registry) and automatically updates docker‑compose services when new images are available. Supports dynamic tags, SemVer selection, rollbacks, metrics, and webhooks.
 
 ## Features
 
-- **Multi-Registry Support**: Docker Hub, AWS ECR, Google Container Registry
-- **Dynamic Tag Patterns**: Support for `staging-*`, `prod-*` style tags with automatic latest selection  
-- **Semantic Versioning**: Intelligent semver parsing and comparison (`v1.2.3`, `release-2.0.0`)
-- **Automatic Service Restart**: Updates docker-compose files and restarts services
-- **State Persistence**: Tracks current tags and digests to avoid redundant updates
-- **Systemd Integration**: Native systemd service with automatic startup and logging
-- **Security**: Dedicated user, minimal privileges, secure credential management
-- **Health Checks**: Docker connectivity and service health monitoring
-- **Production Ready**: Robust error handling, comprehensive logging, monitoring support
+- Multi‑registry: Docker Hub, AWS ECR, Google Container Registry
+- Dynamic tags: glob (`staging-*`) and regex (`^staging-[a-f0-9]{7}$`) with newest push detection
+- SemVer selection: Full SemVer 2.0 precedence (e.g., `v1.2.3`, prerelease ordering)
+- Compose integration: Mutates `docker-compose.yml` and restarts services
+- Reliability: Health‑gated restarts, rollback on failure, digest verification
+- State safety: Atomic state writes, rotating backups, auto‑recovery
+- Metrics & webhooks: Prometheus counters and optional outbound webhook
+- Systemd service: Easy install via `install.sh`; clean uninstall
+
+## Architecture
+
+- `docker_updater.py`: Main entrypoint, orchestrates checks and updates
+- `updater_core/` helpers:
+  - `compose_utils.py`: Compose command detection, exec, YAML mutation
+  - `docker_utils.py`: Image pulls, digests, container lookup, health wait
+  - `registry_utils.py`: Registry authentication (ECR/GCR/Docker Hub)
+  - `semver_utils.py`: SemVer parse/compare
+  - `state_utils.py`: Save/load state, backups, cleanup
+  - `config_utils.py`: Env var resolution, config load/validate, defaults
+  - `metrics_utils.py`: Prometheus counters wiring
+  - `logging_utils.py`: JSON log formatter
+  - `models.py`: `ServiceConfig` dataclass
 
 ## Quick Start
 
-### Automated Installation (Recommended)
-
-1. **Clone and Install**:
+### Install as systemd service (recommended)
 
 ```bash
 git clone <repository-url>
 cd docker-auto-updater
 sudo ./install.sh
-```
 
-2. **Configure Services**:
+# Edit config and env
+sudo nano /etc/docker-auto-updater/updater_config.json
+sudo nano /etc/docker-auto-updater/.env
 
-```bash
-sudo nano /etc/docker-updater/updater_config.json
-sudo nano /etc/docker-updater/.env
-```
-
-3. **Start the Service**:
-
-```bash
+# Start / status
 sudo systemctl enable docker-updater
 sudo systemctl start docker-updater
 sudo systemctl status docker-updater
 ```
 
-### Manual Installation
-
-1. **Install Dependencies**:
+### Run locally
 
 ```bash
-python3 -m venv docker-updater-env
-source docker-updater-env/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-```
 
-2. **Configure and Run**:
-
-```bash
+# Copy and edit local config
 cp .env.example .env
-cp updater_config.json /path/to/config/
-# Edit configuration files
-python docker_updater.py
+cp updater_config.json ./local_updater_config.json
+
+# Run once with debug logs
+CONFIG_FILE=./local_updater_config.json LOG_LEVEL=DEBUG python3 docker_updater.py --once
 ```
 
 ## Configuration
 
-### Service Configuration (`/etc/docker-updater/updater_config.json`)
+- Config file: `/etc/docker-auto-updater/updater_config.json`
+- Env file: `/etc/docker-auto-updater/.env`
+- State: `/var/lib/docker-auto-updater/updater_state.json`
+- Logs: `/var/log/docker-auto-updater/docker_updater.log`
+  - Rotated automatically via logrotate (daily or at 10MB, keep 14 archives)
+- Locks: defaults to `<compose_file>.lock`; if not writable, falls back to `/var/run/docker-auto-updater/locks/<safe-name>.lock` then `/tmp/docker-auto-updater/locks/<safe-name>.lock`
+
+### Example `updater_config.json`
 
 ```json
 {
@@ -76,289 +83,208 @@ python docker_updater.py
       "registry_type": "docker_hub"
     },
     {
-      "name": "api-service",
-      "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/api:staging-abc123",
+      "name": "api-staging",
+      "image": "111111111111.dkr.ecr.us-east-1.amazonaws.com/api:staging-old",
       "compose_file": "/opt/apps/api/docker-compose.yml",
       "compose_service": "api",
       "registry_type": "ecr",
       "tag_pattern": "staging-*",
-      "registry_config": {
-        "region": "us-east-2"
-      }
+      "registry_config": { "region": "us-east-1" }
     },
     {
       "name": "release-app",
-      "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/app:v1.2.3",
+      "image": "111111111111.dkr.ecr.us-east-1.amazonaws.com/app:v1.0.0",
       "compose_file": "/opt/apps/release-app/docker-compose.yml",
       "compose_service": "app",
       "registry_type": "ecr",
       "semver_pattern": "v*",
-      "registry_config": {
-        "region": "us-east-2"
-      }
+      "registry_config": { "region": "us-east-1" }
     }
   ]
 }
 ```
 
-### Environment Variables (`/etc/docker-updater/.env`)
+### `.env` options
 
 ```bash
-# AWS ECR Configuration
-AWS_ACCESS_KEY_ID=your_access_key
-AWS_SECRET_ACCESS_KEY=your_secret_key
-AWS_DEFAULT_REGION=us-east-2
+# Logging
+LOG_LEVEL=INFO         # DEBUG|INFO|WARN|ERROR
+LOG_FORMAT=plain       # or json
 
-# Google Container Registry
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-GCP_PROJECT_ID=your-project-id
+# Intervals / timeouts
+CHECK_INTERVAL=3600
+HEALTH_TIMEOUT=180
+HEALTH_STABLE=10
+COMPOSE_TIMEOUT=120
 
+# State backups
+STATE_BACKUPS=5
+#STATE_BACKUP_DIR=/var/backups/docker-auto-updater
+
+# Observability
+#METRICS_PORT=9100
+#WEBHOOK_URL=https://example.com/webhook
+
+# Controls
+#MAINTENANCE_WINDOW=02:00-04:00,14:00-15:30
+#PAUSE_UPDATES=0
+
+# Registry credentials (optional: prefer IAM/ADC where possible)
+# AWS
+#AWS_ACCESS_KEY_ID=...
+#AWS_SECRET_ACCESS_KEY=...
+#AWS_DEFAULT_REGION=us-east-1
 # Docker Hub
-DOCKER_HUB_USERNAME=your_username
-DOCKER_HUB_PASSWORD=your_password
-
-# Application Settings
-LOG_LEVEL=INFO
-CHECK_INTERVAL=30
+#DOCKER_HUB_USERNAME=...
+#DOCKER_HUB_PASSWORD=...
+# GCP
+#GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 ```
 
-## Service Management
+## Dynamic Tags and SemVer
 
-### Method 1: Docker Compose (Recommended)
-```bash
-# 1. Update volume mounts in docker-compose.yml
-# 2. Start the service
-docker-compose up -d
+- `tag_pattern`: Glob pattern (e.g., `staging-*`); newest pushed tag wins
+- `tag_regex`: Regex filter (e.g., `^staging-[a-f0-9]{7}$`)
+- `semver_pattern`: Prefix for SemVer tags (e.g., `v*`); highest SemVer wins
 
-# View logs
-docker-compose logs -f
-```
+How selection works (ECR examples):
+- List repository tags via ECR API
+- Filter to pattern/regex or SemVer‑prefixed values
+- For `tag_pattern`/`tag_regex`: pick most recent by `imagePushedAt`
+- For `semver_pattern`: compare per SemVer 2.0 precedence
 
-### Method 2: Systemd Service
-```bash
-# 1. Copy files to /opt/docker-auto-updater
-sudo cp -r . /opt/docker-auto-updater
+Example dynamic tag service:
 
-### Start/Stop Service
-
-```bash
-# Start service
-sudo systemctl start docker-updater
-
-# Stop service
-sudo systemctl stop docker-updater
-
-# Restart service
-sudo systemctl restart docker-updater
-
-# Enable auto-start on boot
-sudo systemctl enable docker-updater
-```
-
-### Monitor Service
-
-```bash
-# Check service status
-sudo systemctl status docker-updater
-
-# View real-time logs
-sudo journalctl -u docker-updater -f
-
-# View recent logs
-sudo journalctl -u docker-updater -n 50
-```
-
-### Test Configuration
-
-```bash
-# Test Docker access
-sudo -u docker-updater docker ps
-
-# Validate configuration
-python3 -c "import json; print('Valid JSON' if json.load(open('/etc/docker-updater/updater_config.json')) else 'Invalid')" 
-
-# Test registry connectivity
-sudo -u docker-updater python3 /opt/docker-updater/docker_updater.py --test
-```
-
-### Method 3: Direct Python Execution
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run directly
-python3 docker_updater.py
-```
-
-## Security Considerations
-
-- **Docker Socket Access**: The updater requires access to the Docker socket
-- **Non-root User**: Container runs as non-root user (UID 1000)
-- **Read-only Mounts**: Configuration files are mounted read-only
-- **Resource Limits**: Configure appropriate CPU/memory limits in production
-
-## Monitoring and Logging
-
-### Log Files
-
-- `docker_updater.log`: Application logs
-- `updater_state.json`: Persistent state (image digests, last update times)
-
-### Health Checks
-The Docker container includes health checks that verify Docker connectivity.
-
-### Monitoring Integration
-The application logs structured information suitable for:
-- Prometheus metrics collection
-- ELK stack integration
-- Grafana dashboards
-
-## Advanced Configuration
-
-### Custom Check Intervals
 ```json
 {
-  "check_interval": 60,  // Check every 60 seconds
-  "services": [...]
+  "name": "accounting-staging",
+  "image": "111111111111.dkr.ecr.us-east-1.amazonaws.com/accounting:staging-a1b2c3d",
+  "compose_file": "/apps/accounting/docker-compose.yml",
+  "compose_service": "app",
+  "registry_type": "ecr",
+  "tag_pattern": "staging-*",
+  "registry_config": { "region": "us-east-1" }
 }
 ```
 
-### Multiple Compose Files
+## Registry Setup
+
+### AWS ECR
+
+Minimal IAM policy permissions:
+
 ```json
 {
-  "services": [
+  "Version": "2012-10-17",
+  "Statement": [
     {
-      "name": "frontend",
-      "image": "myapp/frontend:latest",
-      "compose_file": "/apps/frontend/docker-compose.yml",
-      "compose_service": "web"
-    },
-    {
-      "name": "backend",
-      "image": "myapp/backend:latest", 
-      "compose_file": "/apps/backend/docker-compose.yml",
-      "compose_service": "api"
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetAuthorizationToken",
+        "ecr:DescribeImages",
+        "ecr:DescribeRepositories",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ],
+      "Resource": "*"
     }
   ]
 }
 ```
 
-## Advanced Features
+Behavior notes:
+- The updater caches ECR authorization tokens and uses timezone‑aware UTC comparisons for expiry.
+- While a token is valid, it re‑logs into Docker at most once per hour to refresh the client session.
+- Logs include `ECR login succeeded for region ...` and, on reuse, `ECR re-login succeeded ...`.
 
-### Dynamic Tag Patterns
-
-Automatically update to the latest tag matching a pattern:
-
-```json
-{
-  "name": "staging-app",
-  "image": "myregistry/app:staging-abc123",
-  "tag_pattern": "staging-*",
-  "registry_type": "ecr"
-}
-```
-
-### Semantic Versioning Support
-
-Intelligently update to the latest semantic version:
+Per‑service `registry_config` example:
 
 ```json
 {
-  "name": "release-app", 
-  "image": "myregistry/app:v1.2.3",
-  "semver_pattern": "v*",
-  "registry_type": "ecr"
+  "registry_type": "ecr",
+  "registry_config": {
+    "region": "us-east-1",
+    "aws_access_key_id": "${AWS_ACCESS_KEY_ID}",
+    "aws_secret_access_key": "${AWS_SECRET_ACCESS_KEY}"
+  }
 }
 ```
 
-### Multi-Registry Support
+Manual auth test:
 
-- **Docker Hub**: Public and private repositories
-- **AWS ECR**: With IAM role or access key authentication
-- **Google Container Registry**: With service account authentication
+```bash
+aws ecr get-login-password --region us-east-1 \
+ | docker login --username AWS --password-stdin 111111111111.dkr.ecr.us-east-1.amazonaws.com
+```
 
-### Health Checks
+### Google Container Registry (GCR)
 
-Built-in monitoring:
+Set `GOOGLE_APPLICATION_CREDENTIALS` to a service account JSON (or use default credentials) and optionally pass `project_id`/`service_account_path` in a service’s `registry_config`.
 
-- Docker daemon connectivity
-- Registry accessibility
-- Compose file validation
-- Service status verification
+Manual auth test:
+
+```bash
+gcloud auth configure-docker
+docker pull gcr.io/my-project/my-app:latest
+```
+
+### Docker Hub
+
+For private repos, set `DOCKER_HUB_USERNAME`/`DOCKER_HUB_PASSWORD` (or put `username`/`password` under a service’s `registry_config`).
+
+## How It Works
+
+Each cycle for enabled services:
+
+1. Authenticate to registry (if needed)
+2. Compute latest image (digest or dynamic tag/SemVer)
+3. Pull image; compute digest; compare with last state
+4. If update needed: update compose YAML → restart → health‑gate → verify digest
+5. On failure: rollback to prior image and restart
+6. Persist state atomically and write a timestamped backup
+
+## Operations
+
+- Single run: `python3 docker_updater.py --once`
+- Environment test: `python3 docker_updater.py --test`
+- Logs: `journalctl -u docker-updater -f` or `/var/log/docker-auto-updater/docker_updater.log`
+- Pause: `PAUSE_UPDATES=1`
+- Maintenance window: `MAINTENANCE_WINDOW=HH:MM-HH:MM[, ...]`
+
+## Observability
+
+- Enable metrics with `METRICS_PORT`; counters include updates, rollbacks, failures, state restores
+- Set `WEBHOOK_URL` to send JSON events: `update` and `rollback`
+- JSON logs via `LOG_FORMAT=json`
+
+## Security & Best Practices
+
+- Don’t commit secrets; use `.env` and per‑service `registry_config` with env var substitution
+- Prefer IAM roles / Workload Identity over static keys
+- Scope registry credentials to required repos; rotate regularly
+
+## Testing
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt -r dev-requirements.txt
+python -m pytest -q
+```
 
 ## Troubleshooting
 
-### Common Issues
+- Docker permissions: add the service user to the `docker` group
+- Compose not found: install Docker Compose plugin or `docker-compose` binary
+- Auth errors: validate credentials; try the manual auth tests above
+- State fallback: if system path isn’t writable, state is written to `./updater_state.json`
+- Lockfile permissions: if `<compose_file>.lock` cannot be created (read‑only dirs), the updater automatically switches to `/var/run/docker-auto-updater/locks` or `/tmp/docker-auto-updater/locks` and logs `Using fallback lock path ...`.
 
-1. **Permission Denied on Docker Socket**
-   ```bash
-   # Add user to docker group
-   sudo usermod -aG docker $USER
-   ```
+## Production Notes
 
-2. **Docker Compose Not Found**
-   ```bash
-   # Install docker-compose
-   sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-   sudo chmod +x /usr/local/bin/docker-compose
-   ```
-
-3. **Image Digest Not Found**
-
-   - Ensure the image exists in the registry
-   - Check network connectivity to the registry
-   - Verify image tag is correct
-
-### Debug Mode
-
-Enable debug logging by modifying the logging level in `docker_updater.py`:
-
-```python
-logging.basicConfig(level=logging.DEBUG, ...)
-```
-
-## Production Deployment
-
-### Resource Requirements
-- **CPU**: 0.1-0.5 cores
-- **Memory**: 128-512 MB
-- **Storage**: 100 MB for logs and state
-
-### Recommended Setup
-1. Use Docker Compose with restart policies
-2. Configure log rotation
-3. Set up monitoring alerts
-4. Regular backup of state files
-5. Network isolation using Docker networks
-
-### High Availability
-For critical environments:
-- Run multiple instances with different check intervals
-- Use external state storage (Redis/Database)
-- Implement leader election for coordination
-
-## API Integration
-
-The updater can be extended with a REST API for:
-- Manual trigger updates
-- Status monitoring
-- Configuration management
-- Webhook integration
+- CPU: 0.1–0.5 cores; RAM: 128–512 MB; small disk for logs/state
+- Configure log rotation and monitoring alerts
+- Use maintenance windows in busy environments; prefer IAM/ADC over static keys
 
 ## License
 
-MIT License - see LICENSE file for details.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Submit a pull request
-
-## Support
-
-For issues and questions:
-- Check the troubleshooting section
-- Review application logs
-- Open an issue with detailed information
+MIT License — see `LICENSE`
