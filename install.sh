@@ -241,11 +241,19 @@ set_permissions() {
     # Create .docker directory for Docker credentials
     mkdir -p "$INSTALL_DIR/.docker"
     
+    # Determine the group to use
+    if getent group docker > /dev/null 2>&1; then
+        CHOWN_GROUP="docker"
+    else
+        CHOWN_GROUP="$SERVICE_USER"
+        echo -e "${YELLOW}Warning: docker group not found, using $SERVICE_USER group${NC}"
+    fi
+    
     # Set ownership
     chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
-    chown -R "$SERVICE_USER:docker" "$CONFIG_DIR"
-    chown -R "$SERVICE_USER:docker" "$STATE_DIR"
-    chown -R "$SERVICE_USER:docker" "$LOG_DIR"
+    chown -R "$SERVICE_USER:$CHOWN_GROUP" "$CONFIG_DIR"
+    chown -R "$SERVICE_USER:$CHOWN_GROUP" "$STATE_DIR"
+    chown -R "$SERVICE_USER:$CHOWN_GROUP" "$LOG_DIR"
     
     # Set permissions
     chmod 600 "$CONFIG_DIR/.env"
