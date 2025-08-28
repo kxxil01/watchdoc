@@ -118,10 +118,20 @@ create_user() {
         echo "User $SERVICE_USER already exists"
     fi
     
-    # Add user to docker group
-    if getent group docker > /dev/null 2>&1; then
-        usermod -a -G docker "$SERVICE_USER"
-        echo "Added $SERVICE_USER to docker group"
+    # Ensure docker group exists and add user to it
+    if ! getent group docker > /dev/null 2>&1; then
+        echo -e "${YELLOW}Creating docker group...${NC}"
+        groupadd docker
+    fi
+    
+    usermod -a -G docker "$SERVICE_USER"
+    echo "Added $SERVICE_USER to docker group"
+    
+    # Fix Docker socket permissions
+    if [ -S /var/run/docker.sock ]; then
+        chown root:docker /var/run/docker.sock
+        chmod 660 /var/run/docker.sock
+        echo "Fixed Docker socket permissions"
     fi
     
     echo -e "${GREEN}✅ Service user configured${NC}"
@@ -317,7 +327,14 @@ validate_installation() {
     if sudo -u "$SERVICE_USER" docker version >/dev/null 2>&1; then
         echo "✅ Docker access test passed"
     else
-        echo -e "${YELLOW}⚠️  Docker access test failed - may need manual configuration${NC}"
+        echo -e "${RED}❌ Docker access test failed${NC}"
+        echo -e "${YELLOW}Troubleshooting steps:${NC}"
+        echo "1. Check if user is in docker group: groups $SERVICE_USER"
+        echo "2. Check Docker socket permissions: ls -la /var/run/docker.sock"
+        echo "3. Fix permissions: sudo chown root:docker /var/run/docker.sock"
+        echo "4. Add user to group: sudo usermod -a -G docker $SERVICE_USER"
+        echo "5. Restart Docker: sudo systemctl restart docker"
+        echo "6. Test manually: sudo -u $SERVICE_USER docker version"
     fi
     
     # Test configuration file
