@@ -57,9 +57,9 @@ docker_updater.log
 .dockerignore
 
 # Host deployment files
-/opt/docker-updater/
-/etc/docker-updater/
-/var/lib/docker-updater/
+/opt/docker-auto-updater/
+/etc/docker-auto-updater/
+/var/lib/docker-auto-updater/
 
 # Operating system files
 .DS_Store

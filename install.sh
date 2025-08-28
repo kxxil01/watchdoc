@@ -153,7 +153,7 @@ create_directories() {
 verify_files() {
     echo -e "${YELLOW}Checking required files...${NC}"
     
-    REQUIRED_FILES=("docker_updater.py" "docker-updater.service" "docker-updater-sudoers" "requirements.txt")
+    REQUIRED_FILES=("docker_updater.py" "docker-auto-updater.service" "docker-auto-updater-sudoers" "requirements.txt")
     
     for file in "${REQUIRED_FILES[@]}"; do
         if [ ! -f "$SCRIPT_DIR/$file" ]; then
@@ -223,13 +223,13 @@ install_sudoers() {
     echo -e "${YELLOW}Installing sudoers configuration...${NC}"
     
     # Validate and install sudoers file
-    if visudo -c -f "$SCRIPT_DIR/docker-updater-sudoers" >/dev/null 2>&1; then
-        cp "$SCRIPT_DIR/docker-updater-sudoers" /etc/sudoers.d/docker-updater
-        chmod 440 /etc/sudoers.d/docker-updater
+    if visudo -c -f "$SCRIPT_DIR/docker-auto-updater-sudoers" >/dev/null 2>&1; then
+        cp "$SCRIPT_DIR/docker-auto-updater-sudoers" /etc/sudoers.d/docker-auto-updater
+        chmod 440 /etc/sudoers.d/docker-auto-updater
         echo "✅ Sudoers configuration installed"
     else
         echo -e "${YELLOW}Warning: Creating basic sudoers configuration...${NC}"
-        cat > /etc/sudoers.d/docker-updater << 'EOF'
+        cat > /etc/sudoers.d/docker-auto-updater << 'EOF'
 # Docker Auto-Updater Sudoers Configuration
 docker-updater ALL=(root) NOPASSWD: /usr/local/bin/docker-compose
 docker-updater ALL=(root) NOPASSWD: /usr/bin/docker-compose
@@ -237,7 +237,7 @@ docker-updater ALL=(root) NOPASSWD: /bin/docker-compose
 docker-updater ALL=(root) NOPASSWD: /usr/bin/docker
 docker-updater ALL=(root) NOPASSWD: /bin/cp
 EOF
-        chmod 440 /etc/sudoers.d/docker-updater
+        chmod 440 /etc/sudoers.d/docker-auto-updater
         echo "✅ Basic sudoers configuration created"
     fi
     
@@ -304,17 +304,17 @@ install_service() {
     echo -e "${YELLOW}Installing systemd service...${NC}"
     
     # Copy service file
-    cp "$SCRIPT_DIR/docker-updater.service" /etc/systemd/system/
+    cp "$SCRIPT_DIR/docker-auto-updater.service" /etc/systemd/system/
     
     # Update service file to use virtual environment
     VENV_DIR="$INSTALL_DIR/venv"
     if [ -d "$VENV_DIR" ]; then
-        sed -i "s|ExecStart=.*|ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/docker_updater.py|" /etc/systemd/system/docker-updater.service
+        sed -i "s|ExecStart=.*|ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/docker_updater.py|" /etc/systemd/system/docker-auto-updater.service
     fi
     
     # Reload systemd and enable service
     systemctl daemon-reload
-    systemctl enable docker-updater
+    systemctl enable docker-auto-updater
     
     echo -e "${GREEN}✅ Systemd service installed${NC}"
 }
@@ -345,7 +345,7 @@ validate_installation() {
     fi
     
     # Test service file
-    if systemctl is-enabled docker-updater >/dev/null 2>&1; then
+    if systemctl is-enabled docker-auto-updater >/dev/null 2>&1; then
         echo "✅ Service enabled"
     else
         echo -e "${RED}❌ Service not enabled${NC}"
@@ -358,18 +358,18 @@ validate_installation() {
 start_service() {
     echo -e "${YELLOW}Starting service...${NC}"
     
-    if systemctl start docker-updater; then
+    if systemctl start docker-auto-updater; then
         echo "✅ Service started successfully"
         
         # Show service status
         echo -e "\n${BLUE}Service Status:${NC}"
-        systemctl status docker-updater --no-pager -l
+        systemctl status docker-auto-updater --no-pager -l
         
         echo -e "\n${BLUE}Recent logs:${NC}"
-        journalctl -u docker-updater -n 10 --no-pager
+        journalctl -u docker-auto-updater -n 10 --no-pager
     else
         echo -e "${RED}❌ Failed to start service${NC}"
-        echo "Check logs with: journalctl -u docker-updater -f"
+        echo "Check logs with: journalctl -u docker-auto-updater -f"
     fi
 }
 
@@ -396,9 +396,9 @@ main() {
     echo -e "${YELLOW}Next steps:${NC}"
     echo "1. Edit the configuration file: $CONFIG_DIR/updater_config.json"
     echo "2. Configure environment variables: $CONFIG_DIR/.env"
-    echo "3. Check service status: systemctl status docker-updater"
-    echo "4. View logs: journalctl -u docker-updater -f"
-    echo "5. Restart service after config changes: systemctl restart docker-updater"
+    echo "3. Check service status: systemctl status docker-auto-updater"
+    echo "4. View logs: journalctl -u docker-auto-updater -f"
+    echo "5. Restart service after config changes: systemctl restart docker-auto-updater"
     echo
     echo -e "${BLUE}For more information, see the README.md file${NC}"
 }

@@ -29,8 +29,8 @@ sudo ./install.sh
 2. **Configure Services**:
 
 ```bash
-sudo nano /etc/docker-updater/updater_config.json
-sudo nano /etc/docker-updater/.env
+sudo nano /etc/docker-auto-updater/updater_config.json
+sudo nano /etc/docker-auto-updater/.env
 ```
 
 3. **Start the Service**:
@@ -62,7 +62,7 @@ python docker_updater.py
 
 ## Configuration
 
-### Service Configuration (`/etc/docker-updater/updater_config.json`)
+### Service Configuration (`/etc/docker-auto-updater/updater_config.json`)
 
 ```json
 {
@@ -101,7 +101,7 @@ python docker_updater.py
 }
 ```
 
-### Environment Variables (`/etc/docker-updater/.env`)
+### Environment Variables (`/etc/docker-auto-updater/.env`)
 
 ```bash
 # AWS ECR Configuration
@@ -175,10 +175,10 @@ sudo journalctl -u docker-updater -n 50
 sudo -u docker-updater docker ps
 
 # Validate configuration
-python3 -c "import json; print('Valid JSON' if json.load(open('/etc/docker-updater/updater_config.json')) else 'Invalid')" 
+python3 -c "import json; print('Valid JSON' if json.load(open('/etc/docker-auto-updater/updater_config.json')) else 'Invalid')" 
 
 # Test registry connectivity
-sudo -u docker-updater python3 /opt/docker-updater/docker_updater.py --test
+sudo -u docker-updater python3 /opt/docker-auto-updater/docker_updater.py --test
 ```
 
 ### Method 3: Direct Python Execution
