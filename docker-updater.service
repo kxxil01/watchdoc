@@ -23,7 +23,7 @@ NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=false
 ProtectHome=false
-ReadWritePaths=/var/lib/docker-auto-updater /var/log/docker-auto-updater /var/run/docker.sock /opt/docker-updater /app
+ReadWritePaths=/var/lib/docker-auto-updater /var/log/docker-auto-updater /var/run/docker.sock /opt/docker-auto-updater /app
 
 [Install]
 WantedBy=multi-user.target
