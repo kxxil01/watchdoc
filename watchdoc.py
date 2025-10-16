@@ -26,6 +26,7 @@ from google.auth import default
 from google.auth.transport.requests import Request
 import requests
 import shutil
+import yaml
 
 # Load environment variables from .env file
 try:
@@ -894,7 +895,8 @@ class Watchdoc:
             for container in containers:
                 labels = container.labels
                 container_name = container.name
-                image_name = container.image.tags[0] if container.image.tags else str(container.image.id)
+                config_image = container.attrs.get('Config', {}).get('Image') if container.attrs else None
+                image_name = config_image or (container.image.tags[0] if container.image.tags else str(container.image.id))
                 
                 # Extract configuration from labels
                 registry_type_label = labels.get('watchdoc.registry')
@@ -1233,10 +1235,43 @@ class Watchdoc:
                         if not key or key in environ:
                             continue
                         value = value.strip().strip('"').strip("'")
-                        environ[key] = value
+                environ[key] = value
             except Exception as exc:
                 self.logger.warning(f"Failed to read compose .env at {env_path}: {exc}")
         return
+
+    def _resolve_compose_paths(self, service: ServiceConfig) -> List[str]:
+        paths: List[str] = []
+        workdir = service.compose_workdir
+        for compose_file in service.compose_files or []:
+            if os.path.isabs(compose_file):
+                resolved = compose_file
+            elif workdir:
+                resolved = os.path.normpath(os.path.join(workdir, compose_file))
+            else:
+                resolved = os.path.abspath(compose_file)
+            paths.append(resolved)
+        return paths
+
+    def get_declared_compose_image(self, service: ServiceConfig) -> Optional[str]:
+        compose_paths = self._resolve_compose_paths(service)
+        target_service = service.compose_service or service.name
+        for path in compose_paths:
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, 'r') as f:
+                    data = yaml.safe_load(f)
+                if not data:
+                    continue
+                services = data.get('services', {})
+                if target_service in services:
+                    image_ref = services[target_service].get('image')
+                    if image_ref:
+                        return image_ref
+            except Exception as exc:
+                self.logger.warning(f"Failed to read compose file {path}: {exc}")
+        return None
 
     def _resolve_compose_paths(self, service: ServiceConfig) -> List[str]:
         paths: List[str] = []
@@ -1303,6 +1338,8 @@ class Watchdoc:
         current_image = service.image
         latest_tag = None
         
+        declared_image = self.get_declared_compose_image(service) if service.compose_service else None
+
         if service.semver_pattern:
             latest_tag = self.get_latest_semver_tag(service)
             if not latest_tag:
@@ -1368,6 +1405,9 @@ class Watchdoc:
             
             if service.current_tag == target_tag and service.current_digest == new_digest:
                 self.logger.debug(f"No changes detected for {service.name} (tag {target_tag})")
+                return False
+            if declared_image and declared_image == current_image and service.current_digest == new_digest and service.current_tag == target_tag:
+                self.logger.debug(f"Compose already declares latest tag for {service.name}; skipping restart")
                 return False
             
             if self.restart_service(service, current_image):
