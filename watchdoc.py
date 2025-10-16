@@ -678,6 +678,28 @@ class Watchdoc:
         match = re.search(r'(\d+)$', tag)
         return int(match.group(1)) if match else -1
 
+    def _latest_numeric_tag(self, compose_tag: Optional[str], available_tags: List[Dict[str, Any]]) -> Tuple[Optional[str], Optional[str], bool]:
+        if not compose_tag:
+            return None, None, False
+        match = re.match(r'^(.*?)(\d+)$', compose_tag)
+        if not match:
+            return None, None, False
+        prefix, suffix = match.groups()
+        ref_suffix = int(suffix)
+        numeric_candidates: List[Tuple[int, Dict[str, Any]]] = []
+        for entry in available_tags:
+            tag = entry['tag']
+            match_tag = re.match(r'^%s(\d+)$' % re.escape(prefix), tag)
+            if match_tag:
+                numeric_candidates.append((int(match_tag.group(1)), entry))
+        if not numeric_candidates:
+            return None, None, True
+        numeric_candidates.sort(key=lambda x: x[0], reverse=True)
+        top_suffix, top_entry = numeric_candidates[0]
+        if top_suffix <= ref_suffix:
+            return None, None, True
+        return top_entry['tag'], f'prefix:{prefix}', True
+
     def detect_registry_type(self, image: str) -> str:
         """Infer registry type from the image reference when no label is provided."""
         try:
@@ -1277,50 +1299,6 @@ class Watchdoc:
             paths.append(resolved)
         return paths
 
-    def select_latest_tag_for_compose(self, reference_tag: Optional[str], available_tags: List[Dict[str, Any]]) -> Tuple[Optional[str], Optional[str]]:
-        if not available_tags:
-            return None, None
-
-        prefix = None
-        ref_suffix = None
-        if reference_tag:
-            match = re.match(r'^(.*?)(\d+)$', reference_tag)
-            if match:
-                prefix, suffix = match.groups()
-                ref_suffix = int(suffix)
-                numeric_candidates: List[Tuple[int, Dict[str, Any]]] = []
-                for entry in available_tags:
-                    tag = entry['tag']
-                    match_tag = re.match(r'^%s(\d+)$' % re.escape(prefix), tag)
-                    if match_tag:
-                        numeric_candidates.append((int(match_tag.group(1)), entry))
-                if numeric_candidates:
-                    numeric_candidates.sort(key=lambda x: x[0], reverse=True)
-                    top_suffix, top_entry = numeric_candidates[0]
-                    if top_suffix > ref_suffix:
-                        return top_entry['tag'], f'prefix:{prefix}'
-                    return None, None
-                # no numeric candidates with same prefix; ignore other tags
-                return None, None
-
-        sorted_tags = sorted(
-            available_tags,
-            key=lambda entry: (
-                self._numeric_suffix(entry['tag']),
-                self._time_sort_key(entry.get('pushed_at')),
-                entry['tag']
-            ),
-            reverse=True
-        )
-        top_entry = sorted_tags[0]
-        top_tag = top_entry['tag']
-        if reference_tag and top_tag == reference_tag:
-            return None, None
-        strategy = 'latest'
-        if prefix and top_tag.startswith(prefix):
-            strategy = f'prefix:{prefix}'
-        return top_tag, strategy
-
 
     def get_declared_compose_image(self, service: ServiceConfig) -> Optional[str]:
         compose_paths = self._resolve_compose_paths(service)
@@ -1395,7 +1373,9 @@ class Watchdoc:
         detected_strategy = None
         compose_tag = None
         declared_image = None
-        
+        numeric_checked = False
+        current_image = service.image
+
         if service.compose_service:
             declared_image = self.get_declared_compose_image(service)
             if declared_image:
@@ -1404,43 +1384,41 @@ class Watchdoc:
                 if ':' in declared_image:
                     compose_tag = declared_image.split(':', 1)[1]
                     service.current_tag = compose_tag
-            else:
-                current_image = service.image
             available_tags = self.fetch_available_tags(service)
-            latest_tag, detected_strategy = self.select_latest_tag_for_compose(compose_tag, available_tags)
-            service.detected_strategy = detected_strategy
-        else:
-            current_image = service.image
+            latest_tag, detected_strategy, numeric_checked = self._latest_numeric_tag(compose_tag, available_tags)
+            if numeric_checked:
+                if latest_tag is None:
+                    self.logger.debug(f"Compose tag {compose_tag} already latest for {service.name}; verifying digest")
+                else:
+                    image_base = service.image.split(':')[0]
+                    current_image = f"{image_base}:{latest_tag}"
+                service.detected_strategy = detected_strategy
+
+        if not numeric_checked:
             if service.semver_pattern:
                 latest_tag = self.get_latest_semver_tag(service)
                 if not latest_tag:
                     self.logger.warning(f"No semver tags found matching pattern '{service.semver_pattern}' for {service.name}")
                     return False
-                
                 image_base = service.image.split(':')[0]
                 current_image = f"{image_base}:{latest_tag}"
-                
                 if service.current_tag:
                     current_version = service.current_tag.replace(service.semver_pattern.replace('*', ''), '')
                     new_version = latest_tag.replace(service.semver_pattern.replace('*', ''), '')
                     if self.compare_semver(new_version, current_version) <= 0:
                         self.logger.debug(f"No newer semver found for {service.name}, current: {service.current_tag}")
                         return False
-                
                 self.logger.info(f"Latest semver tag for {service.name}: {latest_tag}")
             elif service.tag_pattern:
                 latest_tag = self.get_latest_tag_for_pattern(service)
                 if not latest_tag:
                     self.logger.warning(f"No tags found matching pattern '{service.tag_pattern}' for {service.name}")
                     return False
-                
                 image_base = service.image.split(':')[0]
                 current_image = f"{image_base}:{latest_tag}"
-                
                 if service.current_tag and service.current_tag == latest_tag:
                     self.logger.debug(f"No new tag found for {service.name}, current: {latest_tag}")
                     return False
-                
                 self.logger.info(f"Latest tag for {service.name}: {latest_tag}")
             else:
                 latest_tag, detected_strategy = self.auto_detect_latest_tag(service)
