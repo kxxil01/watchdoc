@@ -1,0 +1,29 @@
+[Unit]
+Description=Watchdoc Service
+After=docker.service network.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=watchdoc
+Group=docker
+WorkingDirectory=/opt/watchdoc
+Environment=PYTHONPATH=/opt/watchdoc
+Environment=CONFIG_FILE=/etc/watchdoc/watchdoc_config.json
+Environment=STATE_FILE=/var/lib/watchdoc/watchdoc_state.json
+EnvironmentFile=-/etc/watchdoc/.env
+ExecStart=/opt/watchdoc/venv/bin/python /opt/watchdoc/watchdoc.py
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/lib/watchdoc /var/log/watchdoc /var/run/docker.sock /opt/watchdoc
+
+[Install]
+WantedBy=multi-user.target

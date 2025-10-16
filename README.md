@@ -1,13 +1,40 @@
-# Docker Auto-Updater
+# Watchdoc
 
-A production-ready Docker container auto-updater that runs on the host system and monitors multiple registries (Docker Hub, AWS ECR, Google Container Registry) for image updates. Automatically restarts services using docker-compose with support for dynamic tag patterns, semantic versioning, and comprehensive logging.
+Watchdoc is a production-ready agent that watches your running containers and keeps them on the freshest image that matches your rules—without brittle per-app configuration. Watchdoc supports Docker Hub, AWS ECR, and Google Container Registry, and the default experience relies on **container labels** instead of hard-coded compose paths.
+
+## Core Workflow
+
+1. Install Watchdoc on the host.
+2. Add a couple of labels to any container you want auto-updated.
+3. Watchdoc discovers, tracks, and refreshes those containers automatically.
+
+## 🚀 Label-Based Auto-Discovery (Default)
+
+**No more manual configuration!** Just add labels to your containers and Watchdoc takes it from there. Most registry details are optional—Watchdoc infers the provider from the image host (`*.amazonaws.com` → ECR, `gcr.io` → GCR, everything else defaults to Docker Hub) and falls back to credentials in `/etc/watchdoc/.env` or the instance profile. Add labels only when you need overrides:
+
+```yaml
+services:
+  my-app:
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/example-service:staging-latest
+    labels:
+      - "watchdoc.enable=true"
+```
+
+✅ **No sudo required** - Uses Docker API directly  
+✅ **Zero configuration** - Automatic container discovery  
+✅ **Works anywhere** - No compose file path needed  
+
+See the [Label-Based Discovery Reference](#label-based-discovery-reference) below for more examples.
 
 ## Features
 
+- **🎯 Label-Based Auto-Discovery**: Automatically discover and monitor containers with labels (default behavior)
 - **Multi-Registry Support**: Docker Hub, AWS ECR, Google Container Registry
 - **Dynamic Tag Patterns**: Support for `staging-*`, `prod-*` style tags with automatic latest selection  
 - **Semantic Versioning**: Intelligent semver parsing and comparison (`v1.2.3`, `release-2.0.0`)
-- **Automatic Service Restart**: Updates docker-compose files and restarts services
+- **Smart Tag Detection**: Auto-identifies semver or prefix-based patterns when no labels are provided and tracks the freshest image automatically
+- **Docker Compose Aware**: Detects compose-managed services via Docker's built-in labels and refreshes them with `docker compose`—no file edits or sudo tricks required
+- **Automatic Service Restart**: Direct Docker API restart (no sudo needed!)
 - **State Persistence**: Tracks current tags and digests to avoid redundant updates
 - **Systemd Integration**: Native systemd service with automatic startup and logging
 - **Security**: Dedicated user, minimal privileges, secure credential management
@@ -22,23 +49,30 @@ A production-ready Docker container auto-updater that runs on the host system an
 
 ```bash
 git clone <repository-url>
-cd docker-auto-updater
+cd watchdoc
 sudo ./install.sh
 ```
 
-2. **Configure Services**:
+2. **Label Your Containers**:
 
-```bash
-sudo nano /etc/docker-auto-updater/updater_config.json
-sudo nano /etc/docker-auto-updater/.env
+```yaml
+# docker-compose.yml
+services:
+  watchdoc-demo:
+    image: nginx:latest
+    labels:
+      - "watchdoc.enable=true"
+      # Optional registry hints, tag patterns, etc.
+      # - "watchdoc.registry=ecr"
+      # - "watchdoc.tag-pattern=staging-*"
 ```
 
 3. **Start the Service**:
 
 ```bash
-sudo systemctl enable docker-updater
-sudo systemctl start docker-updater
-sudo systemctl status docker-updater
+sudo systemctl enable watchdoc
+sudo systemctl start watchdoc
+sudo systemctl status watchdoc
 ```
 
 ### Manual Installation
@@ -46,62 +80,23 @@ sudo systemctl status docker-updater
 1. **Install Dependencies**:
 
 ```bash
-python3 -m venv docker-updater-env
-source docker-updater-env/bin/activate
+python3 -m venv watchdoc-env
+source watchdoc-env/bin/activate
 pip install -r requirements.txt
 ```
 
 2. **Configure and Run**:
 
 ```bash
-cp .env.example .env
-cp updater_config.json /path/to/config/
-# Edit configuration files
-python docker_updater.py
+cat <<'EOF' > .env
+LOG_LEVEL=INFO
+AUTO_DISCOVERY=true
+# Add registry credentials here if needed
+EOF
+python watchdoc.py
 ```
 
-## Configuration
-
-### Service Configuration (`/etc/docker-auto-updater/updater_config.json`)
-
-```json
-{
-  "check_interval": 30,
-  "services": [
-    {
-      "name": "webapp",
-      "image": "myregistry/webapp:latest",
-      "compose_file": "/opt/apps/webapp/docker-compose.yml",
-      "compose_service": "web",
-      "registry_type": "docker_hub"
-    },
-    {
-      "name": "api-service",
-      "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/api:staging-abc123",
-      "compose_file": "/opt/apps/api/docker-compose.yml",
-      "compose_service": "api",
-      "registry_type": "ecr",
-      "tag_pattern": "staging-*",
-      "registry_config": {
-        "region": "us-east-2"
-      }
-    },
-    {
-      "name": "release-app",
-      "image": "285065797661.dkr.ecr.us-east-2.amazonaws.com/app:v1.2.3",
-      "compose_file": "/opt/apps/release-app/docker-compose.yml",
-      "compose_service": "app",
-      "registry_type": "ecr",
-      "semver_pattern": "v*",
-      "registry_config": {
-        "region": "us-east-2"
-      }
-    }
-  ]
-}
-```
-
-### Environment Variables (`/etc/docker-auto-updater/.env`)
+### Environment Variables (`/etc/watchdoc/.env`)
 
 ```bash
 # AWS ECR Configuration
@@ -122,6 +117,8 @@ LOG_LEVEL=INFO
 CHECK_INTERVAL=30
 ```
 
+`watchdoc_config.json` only controls global settings such as `check_interval`. You no longer need to list individual applications—labels on the containers themselves drive discovery.
+
 ## Service Management
 
 ### Method 1: Docker Compose (Recommended)
@@ -134,51 +131,53 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
+> Once the containers are running, Watchdoc automatically recognises them via Docker's compose labels and will run `docker compose up -d --no-deps <service>` after pulling a newer image. No manual file editing or sudo configuration required.
+
 ### Method 2: Systemd Service
 ```bash
-# 1. Copy files to /opt/docker-auto-updater
-sudo cp -r . /opt/docker-auto-updater
+# 1. Copy files to /opt/watchdoc
+sudo cp -r . /opt/watchdoc
 
 ### Start/Stop Service
 
 ```bash
 # Start service
-sudo systemctl start docker-updater
+sudo systemctl start watchdoc
 
 # Stop service
-sudo systemctl stop docker-updater
+sudo systemctl stop watchdoc
 
 # Restart service
-sudo systemctl restart docker-updater
+sudo systemctl restart watchdoc
 
 # Enable auto-start on boot
-sudo systemctl enable docker-updater
+sudo systemctl enable watchdoc
 ```
 
 ### Monitor Service
 
 ```bash
 # Check service status
-sudo systemctl status docker-updater
+sudo systemctl status watchdoc
 
 # View real-time logs
-sudo journalctl -u docker-updater -f
+sudo journalctl -u watchdoc -f
 
 # View recent logs
-sudo journalctl -u docker-updater -n 50
+sudo journalctl -u watchdoc -n 50
 ```
 
 ### Test Configuration
 
 ```bash
 # Test Docker access
-sudo -u docker-updater docker ps
+sudo -u watchdoc docker ps
 
 # Validate configuration
-python3 -c "import json; print('Valid JSON' if json.load(open('/etc/docker-auto-updater/updater_config.json')) else 'Invalid')" 
+python3 -c "import json; print('Valid JSON' if json.load(open('/etc/watchdoc/watchdoc_config.json')) else 'Invalid')" 
 
 # Test registry connectivity
-sudo -u docker-updater python3 /opt/docker-auto-updater/docker_updater.py --test
+sudo -u watchdoc python3 /opt/watchdoc/watchdoc.py --test
 ```
 
 ### Method 3: Direct Python Execution
@@ -187,7 +186,7 @@ sudo -u docker-updater python3 /opt/docker-auto-updater/docker_updater.py --test
 pip install -r requirements.txt
 
 # Run directly
-python3 docker_updater.py
+python3 watchdoc.py
 ```
 
 ## Security Considerations
@@ -201,8 +200,8 @@ python3 docker_updater.py
 
 ### Log Files
 
-- `docker_updater.log`: Application logs
-- `updater_state.json`: Persistent state (image digests, last update times)
+- `watchdoc.log`: Application logs
+- `watchdoc_state.json`: Persistent state (image digests, last update times)
 
 ### Health Checks
 The Docker container includes health checks that verify Docker connectivity.
@@ -215,60 +214,53 @@ The application logs structured information suitable for:
 
 ## Advanced Configuration
 
-### Custom Check Intervals
+### Customize Check Interval
+`/etc/watchdoc/watchdoc_config.json`
 ```json
 {
-  "check_interval": 60,  // Check every 60 seconds
-  "services": [...]
+  "check_interval": 60
 }
 ```
 
-### Multiple Compose Files
-```json
-{
-  "services": [
-    {
-      "name": "frontend",
-      "image": "myapp/frontend:latest",
-      "compose_file": "/apps/frontend/docker-compose.yml",
-      "compose_service": "web"
-    },
-    {
-      "name": "backend",
-      "image": "myapp/backend:latest", 
-      "compose_file": "/apps/backend/docker-compose.yml",
-      "compose_service": "api"
-    }
-  ]
-}
-```
+## Smart Tag Detection (Default)
+
+Watchdoc analyses the tags that already exist in your registry and automatically chooses the freshest image when no tag-related labels are set:
+
+- If tags follow semantic versioning, Watchdoc promotes the highest version.
+- If tags share a prefix (e.g. `staging-abc123`), Watchdoc tracks the newest push that matches the current prefix.
+- Otherwise, Watchdoc falls back to the image with the most recent push timestamp.
+
+Add `watchdoc.tag-pattern` or `watchdoc.semver-pattern` only when you need to override this automatic behaviour.
 
 ## Advanced Features
 
 ### Dynamic Tag Patterns
 
-Automatically update to the latest tag matching a pattern:
+Watchdoc auto-detects tag strategies (semver, prefix, or latest push) when no label is supplied. Add a label only when you need to pin the behaviour to a specific pattern:
 
-```json
-{
-  "name": "staging-app",
-  "image": "myregistry/app:staging-abc123",
-  "tag_pattern": "staging-*",
-  "registry_type": "ecr"
-}
+```yaml
+services:
+  accounting:
+    image: 285065797661.dkr.ecr.us-east-2.amazonaws.com/accounting:staging-abc123
+    labels:
+      - "watchdoc.enable=true"
+      - "watchdoc.registry=ecr"
+      - "watchdoc.ecr.region=us-east-2"
+      - "watchdoc.tag-pattern=staging-*"
 ```
 
 ### Semantic Versioning Support
 
-Intelligently update to the latest semantic version:
+Watchdoc already detects semver tags automatically. Use the label below if you want to enforce a custom pattern (for example, ignore prerelease tags):
 
-```json
-{
-  "name": "release-app", 
-  "image": "myregistry/app:v1.2.3",
-  "semver_pattern": "v*",
-  "registry_type": "ecr"
-}
+```yaml
+services:
+  release-api:
+    image: myregistry/api:v1.2.3
+    labels:
+      - "watchdoc.enable=true"
+      - "watchdoc.registry=ecr"
+      - "watchdoc.semver-pattern=v*"
 ```
 
 ### Multi-Registry Support
@@ -283,7 +275,6 @@ Built-in monitoring:
 
 - Docker daemon connectivity
 - Registry accessibility
-- Compose file validation
 - Service status verification
 
 ## Troubleshooting
@@ -311,7 +302,7 @@ Built-in monitoring:
 
 ### Debug Mode
 
-Enable debug logging by modifying the logging level in `docker_updater.py`:
+Enable debug logging by modifying the logging level in `watchdoc.py`:
 
 ```python
 logging.basicConfig(level=logging.DEBUG, ...)
@@ -362,3 +353,198 @@ For issues and questions:
 - Check the troubleshooting section
 - Review application logs
 - Open an issue with detailed information
+
+---
+
+## Label-Based Discovery Reference
+
+### Overview
+
+Watchdoc supports **automatic container discovery** using Docker labels. This eliminates the need to manually configure compose paths and avoids editing YAML files during updates.
+
+### How It Works
+
+1. Add labels to your services in `docker-compose.yml` or `compose.yml`.
+2. Watchdoc automatically discovers and monitors these containers.
+3. Updates happen via the Docker API or `docker compose` (no sudo required).
+4. No static configuration files are needed.
+
+### Examples
+
+```yaml
+version: '3.8'
+
+services:
+  my-app:
+    image: nginx:latest
+    labels:
+      - "watchdoc.enable=true"
+```
+
+```yaml
+services:
+  accounting:
+    image: 285065797661.dkr.ecr.us-east-2.amazonaws.com/accounting:staging-latest
+    labels:
+      - "watchdoc.enable=true"
+      - "watchdoc.registry=ecr"
+      - "watchdoc.ecr.region=us-east-2"
+      - "watchdoc.ecr.access-key-id=${AWS_ACCESS_KEY_ID}"
+      - "watchdoc.ecr.secret-access-key=${AWS_SECRET_ACCESS_KEY}"
+```
+
+### Labels
+
+| Label | Description | Example |
+|-------|-------------|---------|
+| `watchdoc.enable` | Enable auto-update for this container | `true` |
+| `watchdoc.registry` | Registry type (auto-detected from image host when omitted) | `docker_hub`, `ecr`, `gcr` |
+| `.env` alongside compose files | Automatically merged for compose restarts | `DATABASE_URL=...` |
+| `.env` alongside compose files | Used automatically for compose restarts | `DATABASE_URL=...` |
+| `watchdoc.tag-pattern` | Override auto-detected prefixes | `staging-*` |
+| `watchdoc.semver-pattern` | Override auto-detected semver | `v*` |
+| `watchdoc.ecr.region` | AWS region | `us-east-2` |
+| `watchdoc.ecr.access-key-id` | AWS access key | `${AWS_ACCESS_KEY_ID}` |
+| `watchdoc.ecr.secret-access-key` | AWS secret key | `${AWS_SECRET_ACCESS_KEY}` |
+| `watchdoc.gcr.project-id` | GCP project ID | `my-project` |
+| `watchdoc.gcr.service-account-path` | Service account JSON path | `/path/to/sa.json` |
+| `watchdoc.dockerhub.username` | Docker Hub username | `${DOCKER_HUB_USERNAME}` |
+| `watchdoc.dockerhub.password` | Docker Hub password | `${DOCKER_HUB_PASSWORD}` |
+
+> Leave tag-related labels blank to let Watchdoc auto-detect the smartest strategy. Registry type is inferred from the image host (e.g., `*.amazonaws.com` → ECR), and credentials fall back to environment variables in `/etc/watchdoc/.env` or instance metadata if not provided via labels.
+
+### Troubleshooting
+
+- Inspect labels: `docker inspect <container> | grep -A 10 Labels`
+- Verify container is running: `docker ps | grep <container>`
+- Confirm auto-discovery: `grep AUTO_DISCOVERY /etc/watchdoc/.env`
+
+
+## Dynamic Tag Patterns Deep Dive
+
+Watchdoc analyses the tags already present in your registry and automatically chooses the freshest image.
+
+1. Labels enable the container and provide any registry credentials.
+2. Each scan downloads tag metadata (semver, prefix-based, or push timestamp).
+3. When a newer tag is detected, Watchdoc pulls the image and restarts the service.
+
+```yaml
+services:
+  accounting:
+    image: 285065797661.dkr.ecr.us-east-2.amazonaws.com/accounting:staging-latest
+    labels:
+      - "watchdoc.enable=true"
+      - "watchdoc.registry=ecr"
+      - "watchdoc.ecr.region=us-east-2"
+      - "watchdoc.ecr.access-key-id=${AWS_ACCESS_KEY_ID}"
+      - "watchdoc.ecr.secret-access-key=${AWS_SECRET_ACCESS_KEY}"
+```
+
+Need tighter control? Add `watchdoc.tag-pattern` or `watchdoc.semver-pattern` to pin the behaviour.
+
+**Logging cues**
+
+```
+INFO - Auto-detected latest tag for accounting: staging-a1b2c3d (strategy: prefix:staging-)
+INFO - Pulling image: 285065797661.dkr.ecr.us-east-2.amazonaws.com/accounting:staging-a1b2c3d
+INFO - Restarting compose service accounting (project: accounting)
+INFO - Successfully refreshed compose service: accounting
+```
+
+**Common hiccups**
+
+- `WARNING - No tags found ...` → verify the repository contains matching tags.
+- `ERROR - Failed to authenticate ...` → check credentials/region labels.
+- `ERROR - docker compose failed ...` → confirm labels include compose metadata and the files are accessible.
+
+
+## Registry Setup Reference
+
+### AWS ECR
+
+1. `aws ecr create-repository --repository-name my-app --region us-east-1`
+2. Grant permissions using `ecr:GetAuthorizationToken`, `ecr:DescribeImages`, etc.
+3. Labels:
+   ```yaml
+   labels:
+     - "watchdoc.enable=true"
+     - "watchdoc.registry=ecr"
+     - "watchdoc.ecr.region=us-east-1"
+     - "watchdoc.ecr.access-key-id=${AWS_ACCESS_KEY_ID}"   # optional with IAM role
+     - "watchdoc.ecr.secret-access-key=${AWS_SECRET_ACCESS_KEY}" # optional
+   ```
+4. Optional env vars: export `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`.
+
+### Google Container Registry / Artifact Registry
+
+1. `gcloud services enable containerregistry.googleapis.com`
+2. Create a service account and key.
+3. Labels:
+   ```yaml
+   labels:
+     - "watchdoc.enable=true"
+     - "watchdoc.registry=gcr"
+     - "watchdoc.gcr.project-id=YOUR_PROJECT_ID"
+     - "watchdoc.gcr.service-account-path=/secrets/watchdoc-key.json"
+   ```
+4. Optional env vars: `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`.
+
+### Docker Hub (private)
+
+1. Create a read-only access token.
+2. Labels:
+   ```yaml
+   labels:
+     - "watchdoc.enable=true"
+     - "watchdoc.registry=docker_hub"
+     - "watchdoc.dockerhub.username=${DOCKER_HUB_USERNAME}"
+     - "watchdoc.dockerhub.password=${DOCKER_HUB_TOKEN}"
+   ```
+3. Optional env vars: `DOCKER_HUB_USERNAME`, `DOCKER_HUB_TOKEN`.
+
+| Registry | Label | Env fallback |
+|----------|-------|--------------|
+| ECR | `watchdoc.ecr.access-key-id` | `AWS_ACCESS_KEY_ID` |
+| ECR | `watchdoc.ecr.secret-access-key` | `AWS_SECRET_ACCESS_KEY` |
+| ECR | `watchdoc.ecr.region` | `AWS_DEFAULT_REGION` |
+| GCR | `watchdoc.gcr.service-account-path` | `GOOGLE_APPLICATION_CREDENTIALS` |
+| GCR | `watchdoc.gcr.project-id` | `GOOGLE_CLOUD_PROJECT` |
+| Docker Hub | `watchdoc.dockerhub.username` | `DOCKER_HUB_USERNAME` |
+| Docker Hub | `watchdoc.dockerhub.password` | `DOCKER_HUB_PASSWORD` / `DOCKER_HUB_TOKEN` |
+
+
+## Quick Fix Playbook
+
+**Problem:** `sudo: a password is required` when updating compose-managed services.
+
+**Solution:** Add Watchdoc labels, keep compose metadata intact, and let Watchdoc run `docker compose up -d --no-deps <service>` automatically.
+
+```yaml
+services:
+  accounting:
+    image: 285065797661.dkr.ecr.us-east-2.amazonaws.com/accounting:staging-latest
+    labels:
+      - "watchdoc.enable=true"
+      - "watchdoc.registry=ecr"
+      - "watchdoc.tag-pattern=staging-*"  # Optional override
+      - "watchdoc.ecr.region=us-east-2"
+      - "watchdoc.ecr.access-key-id=${AWS_ACCESS_KEY_ID}"
+      - "watchdoc.ecr.secret-access-key=${AWS_SECRET_ACCESS_KEY}"
+```
+
+> Skip `watchdoc.tag-pattern` if Watchdoc’s automatic tag detection works for you.
+
+**After updating labels:**
+
+```bash
+docker-compose up -d
+sudo systemctl restart watchdoc
+sudo journalctl -u watchdoc -f
+```
+
+You should see messages about auto-discovery and compose restarts instead of permission errors.
+
+**Optional cleanup:**
+
+- Remove legacy entries from `/etc/watchdoc/watchdoc_config.json` (only `check_interval` is required).
+- Toggle discovery via `/etc/watchdoc/.env` if needed (`AUTO_DISCOVERY=false`).

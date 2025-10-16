@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Docker Auto-Updater Uninstall Script
+# Watchdoc Uninstall Script
 # Safely removes all components installed by install.sh
 
 set -e
@@ -13,16 +13,16 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration - matches install.sh structure
-SERVICE_NAME="docker-updater"
-SERVICE_USER="docker-updater"
+SERVICE_NAME="watchdoc"
+SERVICE_USER="watchdoc"
 SERVICE_GROUP="docker"
-INSTALL_DIR="/opt/docker-auto-updater"
-CONFIG_DIR="/etc/docker-auto-updater"
-STATE_DIR="/var/lib/docker-auto-updater"
-LOG_DIR="/var/log/docker-auto-updater"
+INSTALL_DIR="/opt/watchdoc"
+CONFIG_DIR="/etc/watchdoc"
+STATE_DIR="/var/lib/watchdoc"
+LOG_DIR="/var/log/watchdoc"
 VENV_DIR="$INSTALL_DIR/venv"
 
-echo -e "${BLUE}Docker Auto-Updater Uninstall Script${NC}"
+echo -e "${BLUE}Watchdoc Uninstall Script${NC}"
 echo -e "${BLUE}====================================${NC}"
 echo
 
@@ -34,7 +34,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Confirmation prompt
-echo -e "${YELLOW}WARNING: This will completely remove Docker Auto-Updater and all its components.${NC}"
+echo -e "${YELLOW}WARNING: This will completely remove Watchdoc and all its components.${NC}"
 echo -e "${YELLOW}This action cannot be undone.${NC}"
 echo
 read -p "Are you sure you want to continue? (y/N): " -n 1 -r
@@ -97,10 +97,7 @@ else
 fi
 
 if getent group "$SERVICE_GROUP" >/dev/null 2>&1; then
-    groupdel "$SERVICE_GROUP" 2>/dev/null || echo "Could not remove group (may be in use)"
-    echo "Service group removed"
-else
-    echo "Service group not found"
+    echo "Leaving shared docker group intact"
 fi
 
 # Remove installation directory (includes virtual environment)
@@ -163,32 +160,16 @@ else
     echo "State directory not found: $STATE_DIR"
 fi
 
-# Clean up temporary files
-echo -e "${YELLOW}Cleaning up temporary files...${NC}"
-TEMP_FILES_REMOVED=0
-for temp_file in /tmp/docker-compose-*.yml; do
-    if [ -f "$temp_file" ]; then
-        rm -f "$temp_file"
-        ((TEMP_FILES_REMOVED++))
-    fi
-done
-
-if [ $TEMP_FILES_REMOVED -gt 0 ]; then
-    echo "Removed $TEMP_FILES_REMOVED temporary docker-compose files"
-else
-    echo "No temporary files found"
-fi
-
 # Check for any remaining processes
 echo -e "${YELLOW}Checking for remaining processes...${NC}"
-REMAINING_PROCESSES=$(pgrep -f "docker_updater.py" || true)
+REMAINING_PROCESSES=$(pgrep -f "watchdoc.py" || true)
 if [ -n "$REMAINING_PROCESSES" ]; then
-    echo -e "${YELLOW}Warning: Found running docker_updater.py processes:${NC}"
+    echo -e "${YELLOW}Warning: Found running watchdoc.py processes:${NC}"
     echo "$REMAINING_PROCESSES"
     read -p "Kill these processes? (y/N): " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        pkill -f "docker_updater.py" || echo "Could not kill processes"
+        pkill -f "watchdoc.py" || echo "Could not kill processes"
         echo "Processes terminated"
     else
         echo "Processes left running"
@@ -227,7 +208,7 @@ fi
 
 echo
 if [ $ISSUES_FOUND -eq 0 ]; then
-    echo -e "${GREEN}✅ Docker Auto-Updater successfully uninstalled!${NC}"
+    echo -e "${GREEN}✅ Watchdoc successfully uninstalled!${NC}"
     echo -e "${GREEN}✅ All components removed cleanly${NC}"
 else
     echo -e "${YELLOW}⚠️  Uninstall completed with $ISSUES_FOUND issues${NC}"
@@ -238,20 +219,19 @@ echo
 echo -e "${BLUE}Uninstall Summary:${NC}"
 echo -e "${BLUE}=================${NC}"
 echo "• Systemd service: Stopped and removed"
-echo "• Service user/group: Removed"
+echo "• Service user: Removed (docker group preserved)"
 echo "• Sudoers configuration: Removed"
 echo "• Installation directory: Removed (includes Python venv)"
 echo "• State directory: User choice"
 echo "• Configuration directory: User choice"
 echo "• Log directory: User choice"
-echo "• Temporary files: Cleaned up"
 echo
-echo -e "${BLUE}Thank you for using Docker Auto-Updater!${NC}"
+echo -e "${BLUE}Thank you for using Watchdoc!${NC}"
 
 # Optional: Suggest manual verification steps
 echo
 echo -e "${YELLOW}Optional manual verification:${NC}"
-echo "• Check for any remaining docker_updater processes: ps aux | grep docker_updater"
-echo "• Verify no systemd services: systemctl list-unit-files | grep docker-updater"
+echo "• Check for any remaining watchdoc processes: ps aux | grep watchdoc"
+echo "• Verify no systemd services: systemctl list-unit-files | grep watchdoc"
 echo "• Check sudoers: sudo visudo -c"
-echo "• Verify user removal: id docker-updater"
+echo "• Verify user removal: id watchdoc"

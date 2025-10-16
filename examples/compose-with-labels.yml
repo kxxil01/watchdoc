@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # Example 1: Simple Docker Hub image
+  nginx:
+    image: nginx:latest
+    labels:
+      - "watchdoc.enable=true"
+    ports:
+      - "80:80"
+
+  # Example 2: ECR image with tag pattern
+  accounting:
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/example-service:staging-latest
+    labels:
+      - "watchdoc.enable=true"
+      - "watchdoc.registry=ecr"
+      - "watchdoc.tag-pattern=staging-*"
+      - "watchdoc.ecr.region=us-east-1"
+      - "watchdoc.ecr.access-key-id=${AWS_ACCESS_KEY_ID:-}"
+      - "watchdoc.ecr.secret-access-key=${AWS_SECRET_ACCESS_KEY:-}"
+    environment:
+      - NODE_ENV=production
+    ports:
+      - "3000:3000"
+
+  # Example 3: Semantic versioning
+  api:
+    image: myrepo/api:v1.2.3
+    labels:
+      - "watchdoc.enable=true"
+      - "watchdoc.semver-pattern=v*"
+      - "watchdoc.registry=docker_hub"
+      - "watchdoc.dockerhub.username=${DOCKERHUB_USERNAME}"
+      - "watchdoc.dockerhub.password=${DOCKERHUB_PASSWORD}"
+    ports:
+      - "8080:8080"
+
+  # Example 4: GCR image
+  web:
+    image: gcr.io/my-project/web:latest
+    labels:
+      - "watchdoc.enable=true"
+      - "watchdoc.registry=gcr"
+      - "watchdoc.gcr.project-id=my-project"
+      - "watchdoc.gcr.service-account-path=/path/to/sa.json"
+    ports:
+      - "8000:8000"
+
+  # Example 5: Disabled auto-update
+  database:
+    image: postgres:15
+    labels:
+      - "watchdoc.enable=false"
+    environment:
+      - POSTGRES_PASSWORD=secret
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+volumes:
+  db-data:

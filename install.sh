@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Docker Auto-Updater Installation Script
-# This script installs the Docker Auto-Updater service on a Linux system
+# Watchdoc Installation Script
+# Installs the Watchdoc agent on a Linux system
 
 set -e
 
@@ -13,14 +13,14 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-SERVICE_USER="docker-updater"
+SERVICE_USER="watchdoc"
 SERVICE_GROUP="docker"
-INSTALL_DIR="/opt/docker-auto-updater"
-CONFIG_DIR="/etc/docker-auto-updater"
-STATE_DIR="/var/lib/docker-auto-updater"
-LOG_DIR="/var/log/docker-auto-updater"
+INSTALL_DIR="/opt/watchdoc"
+CONFIG_DIR="/etc/watchdoc"
+STATE_DIR="/var/lib/watchdoc"
+LOG_DIR="/var/log/watchdoc"
 
-echo -e "${GREEN}Docker Auto-Updater Installation Script${NC}"
+echo -e "${GREEN}Watchdoc Installation Script${NC}"
 echo "========================================"
 
 # Check if running as root
@@ -35,7 +35,7 @@ CURRENT_DIR="$(pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Use current directory if script directory detection fails
-if [ ! -f "$SCRIPT_DIR/docker_updater.py" ] && [ -f "$CURRENT_DIR/docker_updater.py" ]; then
+if [ ! -f "$SCRIPT_DIR/watchdoc.py" ] && [ -f "$CURRENT_DIR/watchdoc.py" ]; then
     SCRIPT_DIR="$CURRENT_DIR"
 fi
 
@@ -69,13 +69,6 @@ install_dependencies() {
         "Ubuntu"*|"Debian"*)
             apt-get update
             apt-get install -y python3 python3-pip python3-venv docker.io curl sudo
-            
-            # Try to install docker-compose-plugin, fallback to manual installation
-            if ! apt-get install -y docker-compose-plugin 2>/dev/null; then
-                echo -e "${YELLOW}docker-compose-plugin not available, installing docker-compose manually...${NC}"
-                curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-                chmod +x /usr/local/bin/docker-compose
-            fi
             ;;
         "CentOS"*|"Red Hat"*|"Rocky"*|"AlmaLinux"*)
             if command -v dnf >/dev/null 2>&1; then
@@ -83,20 +76,13 @@ install_dependencies() {
             else
                 yum install -y python3 python3-pip docker curl sudo
             fi
-            
-            # Install docker-compose manually for RHEL-based systems
-            curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-            chmod +x /usr/local/bin/docker-compose
             ;;
         "Amazon Linux"*)
             yum update -y
             yum install -y python3 python3-pip docker curl sudo
-            # Install docker-compose separately for Amazon Linux
-            curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-            chmod +x /usr/local/bin/docker-compose
             ;;
         *)
-            echo -e "${YELLOW}Unknown OS. Please install Python3, pip, Docker, and docker-compose manually.${NC}"
+            echo -e "${YELLOW}Unknown OS. Please install Python3, pip, Docker, and curl manually.${NC}"
             ;;
     esac
     
@@ -153,7 +139,7 @@ create_directories() {
 verify_files() {
     echo -e "${YELLOW}Checking required files...${NC}"
     
-    REQUIRED_FILES=("docker_updater.py" "docker-auto-updater.service" "docker-auto-updater-sudoers" "requirements.txt")
+    REQUIRED_FILES=("watchdoc.py" "watchdoc.service" "requirements.txt")
     
     for file in "${REQUIRED_FILES[@]}"; do
         if [ ! -f "$SCRIPT_DIR/$file" ]; then
@@ -172,76 +158,46 @@ copy_files() {
     echo -e "${YELLOW}Copying application files...${NC}"
     
     # Copy application files
-    cp "$SCRIPT_DIR/docker_updater.py" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/watchdoc.py" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
     echo "✅ Application files copied"
     
     # Copy configuration template if it exists
-    if [ -f "$SCRIPT_DIR/updater_config.json" ]; then
-        cp "$SCRIPT_DIR/updater_config.json" "$CONFIG_DIR/"
+    if [ -f "$SCRIPT_DIR/watchdoc_config.json" ]; then
+        cp "$SCRIPT_DIR/watchdoc_config.json" "$CONFIG_DIR/"
         echo "✅ Configuration template copied"
     else
-        echo -e "${YELLOW}Warning: updater_config.json not found, you'll need to create it manually${NC}"
+        echo -e "${YELLOW}Warning: watchdoc_config.json not found, you'll need to create it manually${NC}"
     fi
     
-    # Handle environment file
-    if [ -f "$SCRIPT_DIR/.env.example" ]; then
-        cp "$SCRIPT_DIR/.env.example" "$CONFIG_DIR/.env"
-        echo "✅ Environment template copied"
-    else
-        echo -e "${YELLOW}Creating default environment file...${NC}"
-        cat > "$CONFIG_DIR/.env" << 'EOF'
-# Docker Auto-Updater Environment Configuration
+    # Create environment file
+    echo -e "${YELLOW}Writing default environment file...${NC}"
+    cat > "$CONFIG_DIR/.env" << 'EOF'
+# Watchdoc Environment Configuration
 
 # Logging Configuration
 LOG_LEVEL=INFO
 
-# Update Check Interval (seconds)
-CHECK_INTERVAL=3600
+# Enable/disable label discovery (leave true for normal operation)
+AUTO_DISCOVERY=true
 
-# AWS Configuration (if using ECR)
+# Registry Credentials (optional overrides)
 #AWS_ACCESS_KEY_ID=your_access_key
 #AWS_SECRET_ACCESS_KEY=your_secret_key
 #AWS_DEFAULT_REGION=us-west-2
-
-# Google Cloud Configuration (if using GCR)
 #GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 #GCP_PROJECT_ID=your-project-id
-
-# Docker Hub Configuration (if using private repos)
 #DOCKER_HUB_USERNAME=your_username
 #DOCKER_HUB_PASSWORD=your_password
 EOF
-        echo "✅ Default environment file created"
-    fi
+    echo "✅ Environment file created at $CONFIG_DIR/.env"
     
     echo -e "${GREEN}✅ Files copied successfully${NC}"
 }
 
 # Install sudoers configuration
 install_sudoers() {
-    echo -e "${YELLOW}Installing sudoers configuration...${NC}"
-    
-    # Validate and install sudoers file
-    if visudo -c -f "$SCRIPT_DIR/docker-auto-updater-sudoers" >/dev/null 2>&1; then
-        cp "$SCRIPT_DIR/docker-auto-updater-sudoers" /etc/sudoers.d/docker-auto-updater
-        chmod 440 /etc/sudoers.d/docker-auto-updater
-        echo "✅ Sudoers configuration installed"
-    else
-        echo -e "${YELLOW}Warning: Creating basic sudoers configuration...${NC}"
-        cat > /etc/sudoers.d/docker-auto-updater << 'EOF'
-# Docker Auto-Updater Sudoers Configuration
-docker-updater ALL=(root) NOPASSWD: /usr/local/bin/docker-compose
-docker-updater ALL=(root) NOPASSWD: /usr/bin/docker-compose
-docker-updater ALL=(root) NOPASSWD: /bin/docker-compose
-docker-updater ALL=(root) NOPASSWD: /usr/bin/docker
-docker-updater ALL=(root) NOPASSWD: /bin/cp
-EOF
-        chmod 440 /etc/sudoers.d/docker-auto-updater
-        echo "✅ Basic sudoers configuration created"
-    fi
-    
-    echo -e "${GREEN}✅ Sudoers configuration installed${NC}"
+    echo -e "${YELLOW}Skipping sudoers configuration (docker group access is sufficient for Watchdoc).${NC}"
 }
 
 # Set file permissions
@@ -267,8 +223,8 @@ set_permissions() {
     
     # Set permissions
     chmod 600 "$CONFIG_DIR/.env"
-    if [ -f "$CONFIG_DIR/updater_config.json" ]; then
-        chmod 644 "$CONFIG_DIR/updater_config.json"
+    if [ -f "$CONFIG_DIR/watchdoc_config.json" ]; then
+        chmod 644 "$CONFIG_DIR/watchdoc_config.json"
     fi
     chmod 755 "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR"
     chmod 755 "$INSTALL_DIR/.docker"
@@ -304,17 +260,17 @@ install_service() {
     echo -e "${YELLOW}Installing systemd service...${NC}"
     
     # Copy service file
-    cp "$SCRIPT_DIR/docker-auto-updater.service" /etc/systemd/system/
+    cp "$SCRIPT_DIR/watchdoc.service" /etc/systemd/system/
     
     # Update service file to use virtual environment
     VENV_DIR="$INSTALL_DIR/venv"
     if [ -d "$VENV_DIR" ]; then
-        sed -i "s|ExecStart=.*|ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/docker_updater.py|" /etc/systemd/system/docker-auto-updater.service
+        sed -i "s|ExecStart=.*|ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/watchdoc.py|" /etc/systemd/system/watchdoc.service
     fi
     
     # Reload systemd and enable service
     systemctl daemon-reload
-    systemctl enable docker-auto-updater
+    systemctl enable watchdoc
     
     echo -e "${GREEN}✅ Systemd service installed${NC}"
 }
@@ -338,14 +294,14 @@ validate_installation() {
     fi
     
     # Test configuration file
-    if [ -f "$CONFIG_DIR/updater_config.json" ]; then
+    if [ -f "$CONFIG_DIR/watchdoc_config.json" ]; then
         echo "✅ Configuration file present"
     else
-        echo -e "${YELLOW}⚠️  Configuration file missing - please create $CONFIG_DIR/updater_config.json${NC}"
+        echo -e "${YELLOW}⚠️  Configuration file missing - please create $CONFIG_DIR/watchdoc_config.json${NC}"
     fi
     
     # Test service file
-    if systemctl is-enabled docker-auto-updater >/dev/null 2>&1; then
+    if systemctl is-enabled watchdoc >/dev/null 2>&1; then
         echo "✅ Service enabled"
     else
         echo -e "${RED}❌ Service not enabled${NC}"
@@ -358,24 +314,24 @@ validate_installation() {
 start_service() {
     echo -e "${YELLOW}Starting service...${NC}"
     
-    if systemctl start docker-auto-updater; then
+    if systemctl start watchdoc; then
         echo "✅ Service started successfully"
         
         # Show service status
         echo -e "\n${BLUE}Service Status:${NC}"
-        systemctl status docker-auto-updater --no-pager -l
+        systemctl status watchdoc --no-pager -l
         
         echo -e "\n${BLUE}Recent logs:${NC}"
-        journalctl -u docker-auto-updater -n 10 --no-pager
+        journalctl -u watchdoc -n 10 --no-pager
     else
         echo -e "${RED}❌ Failed to start service${NC}"
-        echo "Check logs with: journalctl -u docker-auto-updater -f"
+        echo "Check logs with: journalctl -u watchdoc -f"
     fi
 }
 
 # Main installation process
 main() {
-    echo -e "${BLUE}Starting Docker Auto-Updater installation...${NC}"
+    echo -e "${BLUE}Starting Watchdoc installation...${NC}"
     
     detect_os
     verify_files
@@ -394,11 +350,11 @@ main() {
     echo -e "${GREEN}🎉 Installation completed successfully!${NC}"
     echo
     echo -e "${YELLOW}Next steps:${NC}"
-    echo "1. Edit the configuration file: $CONFIG_DIR/updater_config.json"
-    echo "2. Configure environment variables: $CONFIG_DIR/.env"
-    echo "3. Check service status: systemctl status docker-auto-updater"
-    echo "4. View logs: journalctl -u docker-auto-updater -f"
-    echo "5. Restart service after config changes: systemctl restart docker-auto-updater"
+    echo "1. Adjust the check interval in $CONFIG_DIR/watchdoc_config.json if needed."
+    echo "2. Populate $CONFIG_DIR/.env with registry credentials (optional)."
+    echo "3. Add Watchdoc labels to the containers you want auto-updated."
+    echo "4. Check service status: systemctl status watchdoc"
+    echo "5. Tail logs: journalctl -u watchdoc -f"
     echo
     echo -e "${BLUE}For more information, see the README.md file${NC}"
 }
