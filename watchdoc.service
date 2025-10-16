@@ -23,8 +23,8 @@ StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ProtectHome=read-only
-ReadWritePaths=/var/lib/watchdoc /var/log/watchdoc /var/run/docker.sock /opt/watchdoc
+ProtectHome=false
+ReadWritePaths=/var/lib/watchdoc /var/log/watchdoc /var/run/docker.sock /opt/watchdoc /home
 
 [Install]
 WantedBy=multi-user.target

@@ -54,7 +54,8 @@ sudo ./install.sh
 ```
 
 > The systemd service runs as the non-root user that invoked `sudo ./install.sh`, so it inherits the same access to compose files, `.env`, and other resources.
-> When Watchdoc rolls a compose service, it updates the discovered compose YAML with the new image tag before calling `docker compose`. You’ll see `.yaml` diffs reflecting each upgrade.
+> Watchdoc rewrites the discovered compose YAML with the new image tag before calling `docker compose`. Ensure the install user has write access to the project; otherwise the service falls back to container recreation.
+> The systemd unit disables `ProtectHome` so `/home` remains writable—compose projects under the install user’s home directory continue to work.
 
 2. **Label Your Containers**:
 

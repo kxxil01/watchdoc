@@ -286,6 +286,12 @@ install_service() {
     else
         sed -i "s|^Environment=DOCKER_CONFIG=.*|Environment=DOCKER_CONFIG=$DOCKER_CONFIG_DIR|" /etc/systemd/system/watchdoc.service
     fi
+    sed -i "s|^ProtectHome=.*|ProtectHome=false|" /etc/systemd/system/watchdoc.service
+    if grep -q "^ReadWritePaths=" /etc/systemd/system/watchdoc.service; then
+        sed -i "s|^ReadWritePaths=.*|ReadWritePaths=/var/lib/watchdoc /var/log/watchdoc /var/run/docker.sock /opt/watchdoc /home|" /etc/systemd/system/watchdoc.service
+    else
+        sed -i "/ProtectHome=/a ReadWritePaths=/var/lib/watchdoc /var/log/watchdoc /var/run/docker.sock /opt/watchdoc /home" /etc/systemd/system/watchdoc.service
+    fi
 
     # Reload systemd and enable service
     systemctl daemon-reload
