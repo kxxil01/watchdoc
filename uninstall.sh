@@ -22,6 +22,11 @@ STATE_DIR="/var/lib/watchdoc"
 LOG_DIR="/var/log/watchdoc"
 VENV_DIR="$INSTALL_DIR/venv"
 
+if [ -f "$CONFIG_DIR/install_user" ]; then
+    SERVICE_USER=$(cat "$CONFIG_DIR/install_user" | tr -d '\n')
+    SERVICE_GROUP=$(id -gn "$SERVICE_USER" 2>/dev/null || echo "$SERVICE_GROUP")
+fi
+
 echo -e "${BLUE}Watchdoc Uninstall Script${NC}"
 echo -e "${BLUE}====================================${NC}"
 echo
@@ -81,21 +86,7 @@ else
     echo "Sudoers configuration not found"
 fi
 
-# Remove service user and group
-echo -e "${YELLOW}Removing service user and group...${NC}"
-if id "$SERVICE_USER" &>/dev/null; then
-    # Remove user from docker group if it exists
-    if getent group docker >/dev/null 2>&1; then
-        gpasswd -d "$SERVICE_USER" docker 2>/dev/null || echo "User was not in docker group"
-    fi
-    
-    # Remove user
-    userdel "$SERVICE_USER" 2>/dev/null || echo "Could not remove user (may not exist)"
-    echo "Service user removed"
-else
-    echo "Service user not found"
-fi
-
+# Remove service user membership note
 if getent group "$SERVICE_GROUP" >/dev/null 2>&1; then
     echo "Leaving shared docker group intact"
 fi
@@ -115,6 +106,7 @@ fi
 # Remove configuration directory
 echo -e "${YELLOW}Removing configuration directory...${NC}"
 if [ -d "$CONFIG_DIR" ]; then
+    rm -f "$CONFIG_DIR/install_user"
     echo -e "${YELLOW}Configuration directory contains user data.${NC}"
     read -p "Remove configuration directory $CONFIG_DIR? (y/N): " -n 1 -r
     echo
@@ -188,12 +180,6 @@ if systemctl list-unit-files | grep -q "$SERVICE_NAME.service"; then
     ((ISSUES_FOUND++))
 fi
 
-# Check user
-if id "$SERVICE_USER" &>/dev/null; then
-    echo -e "${RED}⚠️  Service user still exists${NC}"
-    ((ISSUES_FOUND++))
-fi
-
 # Check sudoers
 if [ -f "/etc/sudoers.d/$SERVICE_NAME" ]; then
     echo -e "${RED}⚠️  Sudoers configuration still exists${NC}"
@@ -219,7 +205,7 @@ echo
 echo -e "${BLUE}Uninstall Summary:${NC}"
 echo -e "${BLUE}=================${NC}"
 echo "• Systemd service: Stopped and removed"
-echo "• Service user: Removed (docker group preserved)"
+echo "• Service user: Left unchanged"
 echo "• Sudoers configuration: Removed"
 echo "• Installation directory: Removed (includes Python venv)"
 echo "• State directory: User choice"
@@ -234,4 +220,4 @@ echo -e "${YELLOW}Optional manual verification:${NC}"
 echo "• Check for any remaining watchdoc processes: ps aux | grep watchdoc"
 echo "• Verify no systemd services: systemctl list-unit-files | grep watchdoc"
 echo "• Check sudoers: sudo visudo -c"
-echo "• Verify user removal: id watchdoc"
+echo "• Verify install user permissions remain correct"

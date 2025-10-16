@@ -13,8 +13,13 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-SERVICE_USER="watchdoc"
-SERVICE_GROUP="docker"
+INSTALL_USER="${WATCHDOC_USER:-${SUDO_USER}}"
+if [ -z "$INSTALL_USER" ]; then
+    echo -e "${RED}Error: Unable to determine install user. Run with sudo from a non-root account or set WATCHDOC_USER.${NC}"
+    exit 1
+fi
+SERVICE_USER="$INSTALL_USER"
+SERVICE_GROUP="$(id -gn "$SERVICE_USER" 2>/dev/null || echo "$SERVICE_USER")"
 INSTALL_DIR="/opt/watchdoc"
 CONFIG_DIR="/etc/watchdoc"
 STATE_DIR="/var/lib/watchdoc"
@@ -93,33 +98,33 @@ install_dependencies() {
     echo -e "${GREEN}✅ Dependencies installed${NC}"
 }
 
-# Create system user
-create_user() {
-    echo -e "${YELLOW}Creating service user...${NC}"
-    
+# Configure service user
+configure_user() {
+    echo -e "${YELLOW}Configuring service user...${NC}"
+
     if ! id "$SERVICE_USER" &>/dev/null; then
-        useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER"
-        echo "Created user: $SERVICE_USER"
-    else
-        echo "User $SERVICE_USER already exists"
+        echo -e "${RED}Error: User $SERVICE_USER does not exist. Please create it before running install.${NC}"
+        exit 1
     fi
-    
-    # Ensure docker group exists and add user to it
+
     if ! getent group docker > /dev/null 2>&1; then
         echo -e "${YELLOW}Creating docker group...${NC}"
         groupadd docker
     fi
-    
-    usermod -a -G docker "$SERVICE_USER"
-    echo "Added $SERVICE_USER to docker group"
-    
-    # Fix Docker socket permissions
+
+    if id -nG "$SERVICE_USER" | grep -qw docker; then
+        echo "User $SERVICE_USER already in docker group"
+    else
+        usermod -a -G docker "$SERVICE_USER"
+        echo "Added $SERVICE_USER to docker group"
+    fi
+
     if [ -S /var/run/docker.sock ]; then
         chown root:docker /var/run/docker.sock
         chmod 660 /var/run/docker.sock
-        echo "Fixed Docker socket permissions"
+        echo "Adjusted Docker socket permissions"
     fi
-    
+
     echo -e "${GREEN}✅ Service user configured${NC}"
 }
 
@@ -192,6 +197,10 @@ AUTO_DISCOVERY=true
 EOF
     echo "✅ Environment file created at $CONFIG_DIR/.env"
     
+    echo "$SERVICE_USER" > "$CONFIG_DIR/install_user"
+    chmod 600 "$CONFIG_DIR/install_user"
+    echo "✅ Recorded install user"
+    
     echo -e "${GREEN}✅ Files copied successfully${NC}"
 }
 
@@ -216,7 +225,7 @@ set_permissions() {
     fi
     
     # Set ownership
-    chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
+    chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR"
     chown -R "$SERVICE_USER:$CHOWN_GROUP" "$CONFIG_DIR"
     chown -R "$SERVICE_USER:$CHOWN_GROUP" "$STATE_DIR"
     chown -R "$SERVICE_USER:$CHOWN_GROUP" "$LOG_DIR"
@@ -267,7 +276,9 @@ install_service() {
     if [ -d "$VENV_DIR" ]; then
         sed -i "s|ExecStart=.*|ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/watchdoc.py|" /etc/systemd/system/watchdoc.service
     fi
-    
+    sed -i "s|^User=.*|User=$SERVICE_USER|" /etc/systemd/system/watchdoc.service
+    sed -i "s|^Group=.*|Group=$SERVICE_GROUP|" /etc/systemd/system/watchdoc.service
+
     # Reload systemd and enable service
     systemctl daemon-reload
     systemctl enable watchdoc
@@ -336,7 +347,7 @@ main() {
     detect_os
     verify_files
     install_dependencies
-    create_user
+    configure_user
     create_directories
     copy_files
     install_sudoers

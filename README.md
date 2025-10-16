@@ -53,6 +53,8 @@ cd watchdoc
 sudo ./install.sh
 ```
 
+> The systemd service runs as the non-root user that invoked `sudo ./install.sh`, so it inherits the same access to compose files, `.env`, and other resources.
+
 2. **Label Your Containers**:
 
 ```yaml
@@ -171,13 +173,13 @@ sudo journalctl -u watchdoc -n 50
 
 ```bash
 # Test Docker access
-sudo -u watchdoc docker ps
+sudo -u "$USER" docker ps
 
 # Validate configuration
 python3 -c "import json; print('Valid JSON' if json.load(open('/etc/watchdoc/watchdoc_config.json')) else 'Invalid')" 
 
 # Test registry connectivity
-sudo -u watchdoc python3 /opt/watchdoc/watchdoc.py --test
+sudo -u "$USER" python3 /opt/watchdoc/watchdoc.py --test
 ```
 
 ### Method 3: Direct Python Execution
@@ -400,7 +402,6 @@ services:
 | `watchdoc.enable` | Enable auto-update for this container | `true` |
 | `watchdoc.registry` | Registry type (auto-detected from image host when omitted) | `docker_hub`, `ecr`, `gcr` |
 | `.env` alongside compose files | Automatically merged for compose restarts | `DATABASE_URL=...` |
-| `.env` alongside compose files | Used automatically for compose restarts | `DATABASE_URL=...` |
 | `watchdoc.tag-pattern` | Override auto-detected prefixes | `staging-*` |
 | `watchdoc.semver-pattern` | Override auto-detected semver | `v*` |
 | `watchdoc.ecr.region` | AWS region | `us-east-2` |

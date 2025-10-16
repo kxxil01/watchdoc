@@ -720,7 +720,7 @@ class Watchdoc:
         set_param('CpuQuota', 'cpu_quota', allow_false=True)
         set_param('CpusetCpus', 'cpuset_cpus')
         set_param('CpusetMems', 'cpuset_mems')
-        set_param('Memory', 'memory', allow_false=True)
+        set_param('Memory', 'mem_limit', allow_false=True)
         set_param('MemoryReservation', 'mem_reservation', allow_false=True)
         set_param('MemorySwap', 'memswap_limit', allow_false=True)
         set_param('NanoCpus', 'nano_cpus', allow_false=True)
