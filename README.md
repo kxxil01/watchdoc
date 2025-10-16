@@ -54,6 +54,7 @@ sudo ./install.sh
 ```
 
 > The systemd service runs as the non-root user that invoked `sudo ./install.sh`, so it inherits the same access to compose files, `.env`, and other resources.
+> When Watchdoc rolls a compose service, it updates the discovered compose YAML with the new image tag before calling `docker compose`. You’ll see `.yaml` diffs reflecting each upgrade.
 
 2. **Label Your Containers**:
 

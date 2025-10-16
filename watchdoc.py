@@ -26,7 +26,6 @@ from google.auth import default
 from google.auth.transport.requests import Request
 import requests
 import shutil
-from docker.types import EndpointConfig
 
 # Load environment variables from .env file
 try:
@@ -759,27 +758,27 @@ class Watchdoc:
     def _build_networking_config(self, networks: Dict[str, Any]):
         if not networks:
             return None
-        endpoints: Dict[str, EndpointConfig] = {}
+        endpoints: Dict[str, Dict[str, Any]] = {}
         for net_name, details in networks.items():
-            kwargs: Dict[str, Any] = {}
+            cfg: Dict[str, Any] = {}
             aliases = details.get('Aliases')
             if aliases:
-                kwargs['aliases'] = aliases
+                cfg['Aliases'] = aliases
             ipam = details.get('IPAMConfig') or {}
-            if ipam:
-                if ipam.get('IPv4Address'):
-                    kwargs['ipv4_address'] = ipam.get('IPv4Address')
-                if ipam.get('IPv6Address'):
-                    kwargs['ipv6_address'] = ipam.get('IPv6Address')
-                if ipam.get('LinkLocalIPs'):
-                    kwargs['link_local_ips'] = ipam.get('LinkLocalIPs')
+            if ipam.get('IPv4Address'):
+                cfg.setdefault('IPAMConfig', {})['IPv4Address'] = ipam.get('IPv4Address')
+            if ipam.get('IPv6Address'):
+                cfg.setdefault('IPAMConfig', {})['IPv6Address'] = ipam.get('IPv6Address')
+            if ipam.get('LinkLocalIPs'):
+                cfg.setdefault('IPAMConfig', {})['LinkLocalIPs'] = ipam.get('LinkLocalIPs')
             links = details.get('Links')
             if links:
-                kwargs['links'] = links
+                cfg['Links'] = links
             driver_opts = details.get('DriverOpts')
             if driver_opts:
-                kwargs['driver_opt'] = driver_opts
-            endpoints[net_name] = EndpointConfig(**kwargs)
+                cfg['DriverOpts'] = driver_opts
+            if cfg:
+                endpoints[net_name] = cfg
 
         if not endpoints:
             return None
@@ -999,11 +998,15 @@ class Watchdoc:
     def restart_service(self, service: ServiceConfig, new_image: str) -> bool:
         """Restart a service, preferring docker compose metadata when available."""
         if service.compose_service:
-            if self.restart_via_compose(service, new_image):
-                self._refresh_service_container(service)
-                return True
+            if self.update_compose_sources(service, service.image, new_image):
+                if self.restart_via_compose(service, new_image):
+                    self._refresh_service_container(service)
+                    return True
+                self.logger.warning(f"Compose restart failed for {service.name}; falling back")
+            else:
+                self.logger.warning(f"Compose files unchanged for {service.name}; falling back to recreation")
             self.logger.warning(f"Falling back to container recreation for {service.name}")
-        
+
         if self.recreate_container(service, new_image):
             self._refresh_service_container(service)
             return True
@@ -1109,6 +1112,9 @@ class Watchdoc:
         config = attrs.get('Config', {})
         host_config_dict = attrs.get('HostConfig', {})
         networking = attrs.get('NetworkSettings', {}).get('Networks', {})
+        primary_network = host_config_dict.get('NetworkMode')
+        if not primary_network and networking:
+            primary_network = next(iter(networking.keys()))
         name = attrs.get('Name', '').lstrip('/') or service.name
 
         exposed_ports = None
@@ -1173,6 +1179,22 @@ class Watchdoc:
             new_container = self.docker_client.api.create_container(**create_kwargs)
             new_id = new_container.get('Id') or new_container.get('id')
             self.docker_client.api.start(new_id)
+            for net_name, details in networking.items():
+                if primary_network and net_name == primary_network:
+                    continue
+                ipam = details.get('IPAMConfig') or {}
+                try:
+                    self.docker_client.api.connect_container_to_network(
+                        new_id,
+                        net_name,
+                        aliases=details.get('Aliases'),
+                        links=details.get('Links'),
+                        ipv4_address=ipam.get('IPv4Address'),
+                        ipv6_address=ipam.get('IPv6Address'),
+                        link_local_ips=ipam.get('LinkLocalIPs')
+                    )
+                except Exception as exc:
+                    self.logger.warning(f"Failed to attach {name} to network {net_name}: {exc}")
             service.container_id = new_id
             self.logger.info(f"Successfully recreated container {name}")
             return True
@@ -1215,7 +1237,59 @@ class Watchdoc:
             except Exception as exc:
                 self.logger.warning(f"Failed to read compose .env at {env_path}: {exc}")
         return
-    
+
+    def _resolve_compose_paths(self, service: ServiceConfig) -> List[str]:
+        paths: List[str] = []
+        workdir = service.compose_workdir
+        for compose_file in service.compose_files or []:
+            if os.path.isabs(compose_file):
+                resolved = compose_file
+            elif workdir:
+                resolved = os.path.normpath(os.path.join(workdir, compose_file))
+            else:
+                resolved = os.path.abspath(compose_file)
+            paths.append(resolved)
+        return paths
+
+    def update_compose_sources(self, service: ServiceConfig, old_image: str, new_image: str) -> bool:
+        compose_paths = self._resolve_compose_paths(service)
+        if not compose_paths:
+            return True
+        base_old = old_image.split(':')[0]
+        new_tag = new_image.split(':')[1] if ':' in new_image else ''
+        pattern = re.compile(r'^(\s*image\s*:\s*)(%s)(:[^\s#]+)?' % re.escape(base_old))
+        updated_any = False
+
+        for path in compose_paths:
+            if not os.path.isfile(path):
+                self.logger.debug(f"Compose file {path} not found for {service.name}")
+                continue
+            try:
+                with open(path, 'r') as f:
+                    lines = f.readlines()
+                changed = False
+                new_lines = []
+                for line in lines:
+                    match = pattern.match(line)
+                    if match:
+                        prefix, base, _ = match.groups()
+                        new_line = prefix + base
+                        if new_tag:
+                            new_line += f":{new_tag}"
+                        new_line += line[match.end():]
+                        new_lines.append(new_line)
+                        changed = True
+                    else:
+                        new_lines.append(line)
+                if changed:
+                    with open(path, 'w') as f:
+                        f.writelines(new_lines)
+                    updated_any = True
+                    self.logger.info(f"Updated compose file {path} with image {new_image}")
+            except Exception as exc:
+                self.logger.error(f"Failed to update compose file {path}: {exc}")
+        return updated_any
+
     def check_for_updates(self, service: ServiceConfig) -> bool:
         """Check if a service needs to be updated."""
         if not self.authenticate_registry(service):
