@@ -135,6 +135,8 @@ docker-compose logs -f
 
 > Once the containers are running, Watchdoc automatically recognises them via Docker's compose labels and will run `docker compose up -d --no-deps <service>` after pulling a newer image. No manual file editing or sudo configuration required.
 
+Watchdoc stores its Docker credentials under `/var/lib/watchdoc/docker-config` (override with `DOCKER_CONFIG`) so registry logins succeed even for non-root service accounts.
+
 ### Method 2: Systemd Service
 ```bash
 # 1. Copy files to /opt/watchdoc

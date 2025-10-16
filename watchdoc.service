@@ -11,6 +11,7 @@ WorkingDirectory=/opt/watchdoc
 Environment=PYTHONPATH=/opt/watchdoc
 Environment=CONFIG_FILE=/etc/watchdoc/watchdoc_config.json
 Environment=STATE_FILE=/var/lib/watchdoc/watchdoc_state.json
+Environment=DOCKER_CONFIG=/var/lib/watchdoc/docker-config
 EnvironmentFile=-/etc/watchdoc/.env
 ExecStart=/opt/watchdoc/venv/bin/python /opt/watchdoc/watchdoc.py
 Restart=always

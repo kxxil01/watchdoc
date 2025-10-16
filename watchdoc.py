@@ -85,6 +85,12 @@ class Watchdoc:
         
         # Set state file path from environment or default
         self.state_file = os.getenv('STATE_FILE', '/var/lib/watchdoc/watchdoc_state.json')
+        self.docker_config_dir = os.getenv('DOCKER_CONFIG', '/var/lib/watchdoc/docker-config')
+        try:
+            os.makedirs(self.docker_config_dir, exist_ok=True)
+        except Exception as exc:
+            print(f"Warning: could not create Docker config dir {self.docker_config_dir}: {exc}")
+        os.environ['DOCKER_CONFIG'] = self.docker_config_dir
         
         # Enable/disable auto-discovery via labels
         self.auto_discovery = os.getenv('AUTO_DISCOVERY', 'true').lower() == 'true'

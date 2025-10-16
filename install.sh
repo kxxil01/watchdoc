@@ -24,6 +24,7 @@ INSTALL_DIR="/opt/watchdoc"
 CONFIG_DIR="/etc/watchdoc"
 STATE_DIR="/var/lib/watchdoc"
 LOG_DIR="/var/log/watchdoc"
+DOCKER_CONFIG_DIR="$STATE_DIR/docker-config"
 
 echo -e "${GREEN}Watchdoc Installation Script${NC}"
 echo "========================================"
@@ -136,6 +137,7 @@ create_directories() {
     mkdir -p "$CONFIG_DIR"
     mkdir -p "$STATE_DIR"
     mkdir -p "$LOG_DIR"
+    mkdir -p "$DOCKER_CONFIG_DIR"
     
     echo -e "${GREEN}✅ Directories created${NC}"
 }
@@ -237,6 +239,7 @@ set_permissions() {
     fi
     chmod 755 "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR"
     chmod 755 "$INSTALL_DIR/.docker"
+    chmod 700 "$DOCKER_CONFIG_DIR"
     
     echo -e "${GREEN}✅ Permissions set${NC}"
 }
@@ -278,6 +281,11 @@ install_service() {
     fi
     sed -i "s|^User=.*|User=$SERVICE_USER|" /etc/systemd/system/watchdoc.service
     sed -i "s|^Group=.*|Group=$SERVICE_GROUP|" /etc/systemd/system/watchdoc.service
+    if ! grep -q "^Environment=DOCKER_CONFIG" /etc/systemd/system/watchdoc.service; then
+        sed -i "/^EnvironmentFile/a Environment=DOCKER_CONFIG=$DOCKER_CONFIG_DIR" /etc/systemd/system/watchdoc.service
+    else
+        sed -i "s|^Environment=DOCKER_CONFIG=.*|Environment=DOCKER_CONFIG=$DOCKER_CONFIG_DIR|" /etc/systemd/system/watchdoc.service
+    fi
 
     # Reload systemd and enable service
     systemctl daemon-reload
