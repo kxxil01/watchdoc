@@ -27,6 +27,7 @@ from google.auth.transport.requests import Request
 import requests
 import shutil
 import yaml
+import yaml
 
 # Load environment variables from .env file
 try:
@@ -826,17 +827,36 @@ class Watchdoc:
                     prefix = current_tag.split(delimiter)[0] + delimiter
                     prefix_candidates = [t for t in tags if t['tag'].startswith(prefix)]
                     if prefix_candidates:
+                        def suffix_key(entry):
+                            match = re.search(r'(\d+)$', entry['tag'])
+                            return int(match.group(1)) if match else -1
                         prefix_candidates.sort(
-                            key=lambda x: self._time_sort_key(x.get('pushed_at')),
+                            key=lambda x: (
+                                suffix_key(x),
+                                self._time_sort_key(x.get('pushed_at')),
+                                x['tag']
+                            ),
                             reverse=True
                         )
-                        for item in prefix_candidates:
-                            if item['tag'] != current_tag:
-                                return item['tag'], f'prefix:{prefix}'
+                        top = prefix_candidates[0]
+                        if top['tag'] != current_tag:
+                            return top['tag'], f'prefix:{prefix}'
+                        # already at latest matching prefix
+                        return None, None
 
         # Fallback to most recently pushed tag
+        def suffix_key(entry):
+            match = re.search(r'(\d+)$', entry['tag'])
+            return int(match.group(1)) if match else -1
         time_sorted = [t for t in tags if t['tag'] != current_tag]
-        time_sorted.sort(key=lambda x: self._time_sort_key(x.get('pushed_at')), reverse=True)
+        time_sorted.sort(
+            key=lambda x: (
+                suffix_key(x),
+                self._time_sort_key(x.get('pushed_at')),
+                x['tag']
+            ),
+            reverse=True
+        )
         if time_sorted:
             return time_sorted[0]['tag'], 'latest'
 
@@ -1239,6 +1259,39 @@ class Watchdoc:
             except Exception as exc:
                 self.logger.warning(f"Failed to read compose .env at {env_path}: {exc}")
         return
+
+    def _resolve_compose_paths(self, service: ServiceConfig) -> List[str]:
+        paths: List[str] = []
+        workdir = service.compose_workdir
+        for compose_file in service.compose_files or []:
+            if os.path.isabs(compose_file):
+                resolved = compose_file
+            elif workdir:
+                resolved = os.path.normpath(os.path.join(workdir, compose_file))
+            else:
+                resolved = os.path.abspath(compose_file)
+            paths.append(resolved)
+        return paths
+
+    def get_declared_compose_image(self, service: ServiceConfig) -> Optional[str]:
+        compose_paths = self._resolve_compose_paths(service)
+        target_service = service.compose_service or service.name
+        for path in compose_paths:
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, 'r') as f:
+                    data = yaml.safe_load(f)
+                if not data:
+                    continue
+                services = data.get('services', {})
+                if target_service in services:
+                    image_ref = services[target_service].get('image')
+                    if image_ref:
+                        return image_ref
+            except Exception as exc:
+                self.logger.warning(f"Failed to read compose file {path}: {exc}")
+        return None
 
     def _resolve_compose_paths(self, service: ServiceConfig) -> List[str]:
         paths: List[str] = []
