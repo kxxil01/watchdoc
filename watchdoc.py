@@ -1272,7 +1272,11 @@ class Watchdoc:
                 for line in lines:
                     match = pattern.match(line)
                     if match:
-                        prefix, base, _ = match.groups()
+                        prefix, base, suffix = match.groups()
+                        existing_tag = suffix[1:] if suffix else ''
+                        if existing_tag == new_tag:
+                            new_lines.append(line)
+                            continue
                         new_line = prefix + base
                         if new_tag:
                             new_line += f":{new_tag}"
